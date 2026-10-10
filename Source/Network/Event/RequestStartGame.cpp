@@ -54,4 +54,8 @@ void ResultStartGame::Serialize( ByteBuffer &out ) const
 	out.write_u16( m_packetId );
 	out.write_u32( m_trackId );
 	out.write_u32( m_reply );
+
+	// The game reads one more number here and reports the request as failed without
+	// it. It does nothing with the value.
+	out.write_u32( 0 );
 }

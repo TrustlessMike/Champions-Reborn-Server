@@ -30,9 +30,13 @@ public:
 		const sptr_user m_target,
 		const uint32_t characterId,
 		const CharacterSlotData &metaData,
-		const CharacterSaveType saveType );
+		const CharacterSaveType saveType,
+		const int16_t requestPacketId = 0,
+		const uint32_t requestTrackId = 0 );
 
-	void AppendSaveData( const std::wstring &sessionId, const std::vector<uint8_t> &data, bool endOfData );
+	// False when the piece was refused or, for the last piece, when the character
+	// could not be stored.
+	bool AppendSaveData( const std::wstring &sessionId, const std::vector<uint8_t> &data, bool endOfData );
 	bool CommitSaveTask( const std::wstring &sessionId );
 	void RemoveSaveTask( const std::wstring &sessionId );
 

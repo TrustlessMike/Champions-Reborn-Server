@@ -253,6 +253,9 @@
     <ClInclude Include="Include\Network\Event\RequestGetServerAddress.hpp" />
     <ClInclude Include="Include\Network\Event\RequestGetSocialListInitial.hpp" />
     <ClInclude Include="Include\Network\Event\RequestGetSocialListUpdate.hpp" />
+    <ClInclude Include="Include\Network\Event\RequestGetIgnoreList.hpp" />
+    <ClInclude Include="Include\Network\Event\RequestGetAccountInfo.hpp" />
+    <ClInclude Include="Include\Network\Event\RequestSetRoomBanner.hpp" />
     <ClInclude Include="Include\Network\Event\RequestLeaveRoom.hpp" />
     <ClInclude Include="Include\Network\Event\RequestLogin.hpp" />
     <ClInclude Include="Include\Network\Event\RequestLogout.hpp" />
@@ -333,6 +336,9 @@
     <ClCompile Include="Source\Network\Event\RequestGetRules.cpp" />
     <ClCompile Include="Source\Network\Event\RequestGetServerAddress.cpp" />
     <ClCompile Include="Source\Network\Event\RequestGetSocialListUpdate.cpp" />
+    <ClCompile Include="Source\Network\Event\RequestGetIgnoreList.cpp" />
+    <ClCompile Include="Source\Network\Event\RequestGetAccountInfo.cpp" />
+    <ClCompile Include="Source\Network\Event\RequestSetRoomBanner.cpp" />
     <ClCompile Include="Source\Network\Event\RequestLeaveRoom.cpp" />
     <ClCompile Include="Source\Network\Event\RequestLogin.cpp" />
     <ClCompile Include="Source\Network\Event\RequestLogout.cpp" />

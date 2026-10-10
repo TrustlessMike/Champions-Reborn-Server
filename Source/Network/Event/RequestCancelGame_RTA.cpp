@@ -28,21 +28,18 @@ sptr_generic_response RequestCancelGame_RTA::ProcessRequest( sptr_socket socket,
 		return std::make_shared< ResultCancelGame_RTA >( this );
 	}
 
-	const auto &gameSession = GameSessionManager::Get().FindGame( user->m_gameId, user->m_gameType );
-	if( gameSession == nullptr )
-	{
-		Log::Error( "Game session not found for user [{}]", user->m_sessionId );
-		return std::make_shared< ResultCancelGame_RTA >( this );
-	}
-
 	if( !GameSessionManager::Get().RequestCancel( user ) )
 	{
-		Log::Error( "Failed to cancel game session for user [{}]", user->m_sessionId );
+		// The game may already be gone: started, or cancelled by its host.
+		Log::Debug( "No game session to cancel for user [{}]", user->m_sessionId );
+		user->m_gameId = -1;
 	}
 
-	if( !ChatRoomManager::Get().LeaveRoom( user, user->m_privateRoomId ) )
+	// The game's chat room is left in any case, or its name stays taken.
+	if( user->m_privateRoomId >= 0 && !ChatRoomManager::Get().LeaveRoom( user, user->m_privateRoomId ) )
 	{
 		Log::Error( "Failed to leave private chat room for user [{}]", user->m_username );
+		user->m_privateRoomId = -1;
 	}
 
 	return std::make_shared< ResultCancelGame_RTA >( this );

@@ -25,6 +25,8 @@ void RequestCreatePublicGame_RTA::Deserialize( sptr_byte_stream stream )
 	m_localAddr = Util::WideToUTF8( stream->read_utf16() );
 	m_localPort = stream->read_u32();
 
+	m_attributes.fill( 0 );
+
 	if( !ParseGameInfo() )
 	{
 		Log::Error( "Failed to parse game info: {}", m_gameInfo );
@@ -65,6 +67,8 @@ bool RequestCreatePublicGame_RTA::ParseGameInfo()
 			return false;
 		}
 	}
+
+	m_attributes = fields;
 
 	return true;
 }

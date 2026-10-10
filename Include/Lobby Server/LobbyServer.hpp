@@ -8,8 +8,7 @@
 #include <string>
 #include <array>
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#include "Platform.hpp"
 
 #include "Common/Constant.hpp"
 #include "Common/ByteStream.hpp"
@@ -40,7 +39,19 @@ public:
 		return m_running;
 	}
 
+	// Users, games and chat rooms are used by the lobby thread and by the discovery
+	// thread. Whichever of them is processing a message holds this lock meanwhile.
+	static std::mutex &StateMutex()
+	{
+		return m_stateMutex;
+	}
+
 private:
+	static inline std::mutex m_stateMutex;
+
+	// A client holding more unsent replies than this is dropped.
+	static constexpr size_t MAX_PENDING_WRITE_BYTES = 1024 * 1024;
+
 	sptr_socket m_conSocket;
 	sptr_socket m_rtaSocket;
 	std::vector< sptr_socket > m_gatewaySockets;

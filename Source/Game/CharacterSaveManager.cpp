@@ -38,7 +38,9 @@ bool CharacterSaveManager::BeginSaveTask(
 	const sptr_user m_target,
 	const uint32_t characterId,
 	const CharacterSlotData &metaData,
-	const CharacterSaveType saveType )
+	const CharacterSaveType saveType,
+	const int16_t requestPacketId,
+	const uint32_t requestTrackId )
 {
 	if( !m_owner || !m_target )
 	{
@@ -58,12 +60,14 @@ bool CharacterSaveManager::BeginSaveTask(
 	task->m_ownerUser = m_owner;
 	task->m_targetUser = m_target;
 	task->m_meta = metaData;
+	task->m_requestPacketId = requestPacketId;
+	task->m_requestTrackId = requestTrackId;
 	m_tasks[ sessionId ] = task;
 
 	return true;
 }
 
-void CharacterSaveManager::AppendSaveData( const std::wstring &sessionId, const std::vector<uint8_t> &data, bool endOfData )
+bool CharacterSaveManager::AppendSaveData( const std::wstring &sessionId, const std::vector<uint8_t> &data, bool endOfData )
 {
 	try
 	{
@@ -71,40 +75,46 @@ void CharacterSaveManager::AppendSaveData( const std::wstring &sessionId, const 
 		if( it == m_tasks.end() )
 		{
 			Log::Error( "AddDataToSaveTask: No task found for session ID [{}].", sessionId );
-			return;
+			return false;
 		}
 
-		auto &task = it->second;
+		// Keeps the task alive after CommitSaveTask has taken it out of the map.
+		auto task = it->second;
 
-		if( !task->AppendData( data ) )
+		// The game cuts the data into pieces of 800 bytes. When everything fitted into
+		// the first message it still sends a last piece, flagged and empty.
+		if( !( data.empty() && endOfData ) && !task->AppendData( data ) )
 		{
 			Log::Error( "AddDataToSaveTask: Append failed for session ID [{}].", sessionId );
-			return;
+			return false;
 		}
 
 		if( !endOfData )
 		{
-			return;
+			return true;
 		}
 
 		if( !task->Validate() )
 		{
 			Log::Error( "AddDataToSaveTask: Validation failed for session ID [{}].", sessionId );
-			return;
+			return false;
 		}
 
 		if( !CommitSaveTask( sessionId ) )
 		{
 			Log::Error( "AddDataToSaveTask: Commit failed for session ID [{}].", sessionId );
-			return;
+			return false;
 		}
 
 		Log::Debug( "AddDataToSaveTask: Final chunk committed for session ID [{}].", sessionId );
+		return true;
 	}
 	catch( const std::exception &e )
 	{
-		Log::Error( "AddDataToSaveTask: Exception for session ID [{}]: {}", sessionId, e.what() );
+		Log::Error( "AddDataToSaveTask: Exception for session ID [{}]: {}", sessionId, std::string( e.what() ) );
 	}
+
+	return false;
 }
 
 bool CharacterSaveManager::CommitSaveTask( const std::wstring &sessionId )
@@ -135,6 +145,14 @@ bool CharacterSaveManager::CommitSaveTask( const std::wstring &sessionId )
 
 		if( saveTask->m_saveType == CharacterSaveType::NEW_CHARACTER )
 		{
+			// The game itself stops offering "new character" at this number, and its
+			// character list overruns at 50; nothing else may get an account there.
+			if( Database::Get().LoadCharacterSlots( targetUser->m_accountId ).size() >= MAX_NUMBER_OF_CHARACTERS )
+			{
+				Log::Error( "CommitSaveTask: Account ID {} already has {} characters", targetUser->m_accountId, MAX_NUMBER_OF_CHARACTERS );
+				return false;
+			}
+
 			auto result = Database::Get().CreateNewCharacter( targetUser->m_accountId, saveTask->m_meta, saveTask->m_data );
 			if( !result )
 			{
@@ -145,6 +163,7 @@ bool CharacterSaveManager::CommitSaveTask( const std::wstring &sessionId )
 			Log::Debug( "CommitSaveTask: New character created with ID {} for account ID: {}", result, targetUser->m_accountId );
 
 			targetUser->m_characterId = result;
+			saveTask->m_characterId = result;
 		}
 		else
 		{
@@ -166,7 +185,7 @@ bool CharacterSaveManager::CommitSaveTask( const std::wstring &sessionId )
 	}
 	catch( const std::exception &e )
 	{
-		Log::Error( "CommitSaveTask: Exception occurred while committing task for session ID [{}]: {}", sessionId, e.what() );
+		Log::Error( "CommitSaveTask: Exception occurred while committing task for session ID [{}]: {}", sessionId, std::string( e.what() ) );
 		return false;
 	}
 

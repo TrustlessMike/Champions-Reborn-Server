@@ -1,6 +1,6 @@
 #include "Network/Event/RequestSendInstantMessage.hpp"
 
-#include "Network\Event\NotifyInstantMessage.hpp"
+#include "Network/Event/NotifyInstantMessage.hpp"
 #include "Game/RealmUserManager.hpp"
 #include "Game/ChatRoomManager.hpp"
 #include "logging.hpp"

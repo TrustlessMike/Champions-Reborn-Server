@@ -30,8 +30,10 @@ public:
 class ResultAppendCharacterData : public GenericResponse {
 private:
 	int32_t m_reply;
+	bool m_hasCharacterId;
+	uint32_t m_characterId;
 
 public:
-	ResultAppendCharacterData( GenericRequest *request, int32_t reply );
+	ResultAppendCharacterData( GenericRequest *request, int32_t reply, bool hasCharacterId = false, uint32_t characterId = 0 );
 	void Serialize( ByteBuffer &out ) const;
 };

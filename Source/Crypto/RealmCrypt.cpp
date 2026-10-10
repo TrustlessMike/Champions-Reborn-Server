@@ -124,9 +124,13 @@ std::wstring RealmCrypt::decryptString( std::vector<uint8_t> &input )
 
 std::vector< uint8_t > RealmCrypt::encryptSymmetric( std::span< const uint8_t > input )
 {
+	// The padded copy has to outlive the block that fills it: input is only a view,
+	// and it is read again by EncryptECB below.
+	std::vector< uint8_t > paddedInput;
+
 	if( input.size() % 16 != 0 )
 	{
-		std::vector< uint8_t > paddedInput( input.begin(), input.end() );
+		paddedInput.assign( input.begin(), input.end() );
 		paddedInput.resize( ( ( input.size() / 16 ) + 1 ) * 16, 0 );
 		input = paddedInput;
 	}
@@ -139,14 +143,20 @@ std::vector< uint8_t > RealmCrypt::encryptSymmetric( std::span< const uint8_t > 
 		default_sym_key.data()
 	);
 
-	return std::vector< uint8_t >( result, result + input.size() );
+	std::vector< uint8_t > output( result, result + input.size() );
+	delete[] result;
+
+	return output;
 }
 
 std::vector< uint8_t > RealmCrypt::decryptSymmetric( std::span< const uint8_t > input )
 {
+	// See encryptSymmetric: the padded copy must stay alive until DecryptECB has read it.
+	std::vector< uint8_t > paddedInput;
+
 	if( input.size() % 16 != 0 )
 	{
-		std::vector< uint8_t > paddedInput( input.begin(), input.end() );
+		paddedInput.assign( input.begin(), input.end() );
 		paddedInput.resize( ( ( input.size() / 16 ) + 1 ) * 16, 0 );
 		input = paddedInput;
 	}
@@ -159,5 +169,8 @@ std::vector< uint8_t > RealmCrypt::decryptSymmetric( std::span< const uint8_t > 
 		default_sym_key.data()
 	);
 
-	return std::vector< uint8_t >( result, result + input.size() );
+	std::vector< uint8_t > output( result, result + input.size() );
+	delete[] result;
+
+	return output;
 }

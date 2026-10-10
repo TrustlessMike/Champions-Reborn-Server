@@ -44,6 +44,11 @@ void GameSessionManager::OnDisconnectUser( sptr_user user )
 		Log::Info( "Game session owner disconnected! [{}]", gameId );
 		ForceTerminateGame( gameId, gameType );
 	}
+	else
+	{
+		// A member who was not the owner gives its place back.
+		session->RemoveMember( user );
+	}
 }
 
 bool GameSessionManager::CreateGameSession_CON( sptr_user user,
@@ -249,14 +254,21 @@ bool GameSessionManager::RequestCancel( sptr_user user )
 
 	const auto &session = *it;
 
+	const bool isOwner = ( session->GetOwner() == user );
+
 	if( false == session->RemoveMember( user ) )
 	{
-		Log::Error( "Failed to remove user [{}] from game session [{}]", user->m_username, gameId );
+		// The user had only asked to join (0x57 or 0x66) and was never added. It stops
+		// pointing at the game; the game itself is none of its business.
+		user->m_gameId = -1;
+
+		Log::Info( "User [{}] gave up joining game session [{}]", user->m_username, gameId );
+		return true;
 	}
 
-	if( session->m_currentPlayers <= 0 )
+	if( isOwner || session->m_currentPlayers <= 0 )
 	{
-		Log::Info( "Game session [{}] is empty, removing it", gameId );
+		Log::Info( "Game session [{}] was left by its owner or is empty, removing it", gameId );
 		gameList.erase( it );
 	}
 	else
@@ -329,6 +341,13 @@ bool GameSessionManager::RequestStart( sptr_user user )
 	if( session == nullptr )
 	{
 		Log::Error( "Game session not found! [{}]", gameId );
+		return false;
+	}
+
+	// Only the host starts its game, not a player who has merely asked to join it.
+	if( session->GetOwner() != user )
+	{
+		Log::Error( "User [{}] tried to start game session [{}] without owning it", user->m_username, gameId );
 		return false;
 	}
 
@@ -418,5 +437,5 @@ void GameSessionManager::ProcessJoinArms( sptr_user join, sptr_user host )
 	join->sock->send( NotifyClientDiscovered_RTA( join ) );
 
 	// Tell the host the joining user's address.
-	host->sock->send( NotifyClientRequestConnect_RTA( join ) );
+	host->sock->send( NotifyClientRequestConnect_RTA( join, host->sock->remote_ip ) );
 }

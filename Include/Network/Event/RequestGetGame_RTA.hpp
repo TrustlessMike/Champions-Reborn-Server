@@ -33,9 +33,10 @@ private:
 
 	std::wstring m_discoveryAddr;
 	std::wstring m_localAddr;
-	int32_t m_port;
+	int32_t m_discoveryPort;
+	int32_t m_localPort;
 
 public:
-	ResultGetGame_RTA( GenericRequest *request, int32_t reply, int32_t gameId = -1, std::string discoveryAddr = "", std::string localAddr = "", int32_t discoveryPort = 0 );
+	ResultGetGame_RTA( GenericRequest *request, int32_t reply, int32_t gameId = -1, std::string discoveryAddr = "", int32_t discoveryPort = 0, std::string localAddr = "", int32_t localPort = 0 );
 	void Serialize( ByteBuffer &out ) const;
 };

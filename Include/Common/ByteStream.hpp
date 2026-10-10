@@ -5,6 +5,8 @@
 #include <memory>
 #include <iterator>
 #include <optional>
+#include <cstring>
+#include <stdexcept>
 
 #include "Utility.hpp"
 #include "../Crypto/RealmCrypt.hpp"
@@ -78,8 +80,44 @@ public:
 	size_t get_position() const;
 	void set_position( size_t where );
 
+	// Bytes left between the read position and the end of the buffer.
+	size_t remaining() const
+	{
+		return m_position < m_buffer.size() ? m_buffer.size() - m_position : 0;
+	}
+
+	// Every read goes through this. A message that is shorter than its own length
+	// fields claim must not be read past its end; the caller catches the exception.
+	void require( size_t length, const char *what ) const
+	{
+		if( length > remaining() )
+		{
+			throw std::out_of_range( std::string( what ) + ": Attempt to read past end of buffer" );
+		}
+	}
+
 	std::vector< uint8_t > m_buffer;
 	size_t m_position;
 };
+
+// Defined here rather than in ByteStream.cpp because other translation units call
+// these with their own types, and only MSVC exports the implicit instantiations.
+template < typename T >
+void ByteBuffer::write( T value )
+{
+	write_bytes( ( uint8_t * )&value, sizeof( T ) );
+}
+
+template < typename T >
+T ByteBuffer::read()
+{
+	require( sizeof( T ), "read" );
+
+	T value;
+	std::memcpy( &value, &m_buffer[ m_position ], sizeof( T ) );
+	m_position += sizeof( T );
+
+	return value;
+}
 
 typedef std::shared_ptr< ByteBuffer > sptr_byte_stream;

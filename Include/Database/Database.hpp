@@ -64,6 +64,9 @@ public:
 
 	std::tuple< bool, int64_t, std::wstring > VerifyAccount( const std::wstring &username, const std::wstring &password );
 
+	// Found, e-mail address, date of birth.
+	std::tuple< bool, std::wstring, std::wstring > LoadAccount( const int64_t account_id );
+
 	uint32_t CreateNewCharacter( const int64_t account_id,
 								 const CharacterSlotData meta,
 								 const std::vector< uint8_t > &blob );

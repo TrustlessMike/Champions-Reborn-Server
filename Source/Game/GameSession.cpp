@@ -174,13 +174,14 @@ bool GameSession::RemoveMember( sptr_user user )
 		{
 			user->m_gameId = -1;
 			m_members[ i ].reset();
-			break;
+			m_currentPlayers--;
+
+			Log::Info( "Removed user [{}] from game session [{}]", user->m_username, m_gameName );
+
+			return true;
 		}
 	}
 
-	m_currentPlayers--;
-
-	Log::Info( "Removed user [{}] from game session [{}]", user->m_username, m_gameName );
-
-	return true;
+	// Not a member: someone who only asked to join. The player count is not theirs to lower.
+	return false;
 }

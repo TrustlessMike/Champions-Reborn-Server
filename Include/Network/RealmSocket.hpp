@@ -3,7 +3,10 @@
 #include <memory>
 #include <vector>
 #include <mutex>
-#include <winsock2.h>
+#include <chrono>
+#include <string>
+
+#include "Platform.hpp"
 
 #include "GenericNetRequest.hpp"
 #include "GenericNetResponse.hpp"

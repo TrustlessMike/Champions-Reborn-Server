@@ -1,4 +1,4 @@
-#include "Network\Event\NotifyInstantMessage.hpp"
+#include "Network/Event/NotifyInstantMessage.hpp"
 
 NotifyInstantMessage::NotifyInstantMessage( std::wstring chatHandle, std::wstring message ) : GenericMessage( 0x30 )
 {

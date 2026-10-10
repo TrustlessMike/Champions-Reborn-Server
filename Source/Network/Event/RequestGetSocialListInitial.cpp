@@ -34,6 +34,15 @@ void ResultGetSocialListInitial::Serialize( ByteBuffer &out ) const
 	out.write_u32( m_trackId );
 	out.write_u32( 0 );
 
+	// Sent to a gateway port there is no user, and so three empty lists.
+	if( m_user == nullptr )
+	{
+		out.write_u32( 0 );
+		out.write_u32( 0 );
+		out.write_u32( 0 );
+		return;
+	}
+
 	// Friends
 	out.write_u32( static_cast< uint32_t >( m_user->m_friendList.size() ) );
 	for( const auto &friendHandle : m_user->m_friendList )
@@ -41,9 +50,15 @@ void ResultGetSocialListInitial::Serialize( ByteBuffer &out ) const
 		out.write_utf16( friendHandle );
 	}
 
-	// ?
-	out.write_u32(1);
-	out.write_utf16(L"String_2");
+	// Friends who are online. The game marks each name in this list as online in
+	// the list above; it hands both to the same function as the reply to 0x62.
+	const auto onlineFriends = UserManager::Get().GetOnlineFriends( m_user );
+
+	out.write_u32( static_cast< uint32_t >( onlineFriends.size() ) );
+	for( const auto &friendHandle : onlineFriends )
+	{
+		out.write_utf16( friendHandle );
+	}
 
 	// Ignore
 	out.write_u32( static_cast< uint32_t >( m_user->m_ignoreList.size() ) );

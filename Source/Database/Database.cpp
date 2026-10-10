@@ -87,7 +87,7 @@ void Database::PrepareStatements()
 		"SELECT account_id, username, password, chat_handle FROM RealmUsers WHERE username = ?;" },
 
 		{ QueryID::LoadAccount,
-		"SELECT chat_handle FROM RealmUsers WHERE account_id = ?;" },
+		"SELECT email_address, date_of_birth, chat_handle FROM RealmUsers WHERE account_id = ?;" },
 
 		{ QueryID::CreateNewCharacter,
 		"INSERT INTO RealmCharacters ( account_id, meta_data, character_data ) VALUES ( ?, ?, ? );" },
@@ -259,6 +259,35 @@ Database::VerifyAccount( const std::wstring &username, const std::wstring &passw
 	}
 
 	return std::make_tuple( false, -1, L"" );
+}
+
+std::tuple< bool, std::wstring, std::wstring > Database::LoadAccount( const int64_t account_id )
+{
+	try
+	{
+		auto stmt = m_statements[ QueryID::LoadAccount ];
+
+		sqlite3_reset( stmt );
+		sqlite3_clear_bindings( stmt );
+
+		sqlite3_bind_int64( stmt, 1, account_id );
+
+		if( sqlite3_step( stmt ) == SQLITE_ROW )
+		{
+			const char *dbEmailAddress = reinterpret_cast< const char * >( sqlite3_column_text( stmt, 0 ) );
+			const char *dbDateOfBirth = reinterpret_cast< const char * >( sqlite3_column_text( stmt, 1 ) );
+
+			return std::make_tuple( true,
+									Util::UTF8ToWide( dbEmailAddress ? dbEmailAddress : "" ),
+									Util::UTF8ToWide( dbDateOfBirth ? dbDateOfBirth : "" ) );
+		}
+	}
+	catch( const std::exception &e )
+	{
+		Log::Error( "Database error: {}", std::string( e.what() ) );
+	}
+
+	return std::make_tuple( false, L"", L"" );
 }
 
 uint32_t Database::CreateNewCharacter( const int64_t account_id, const CharacterSlotData meta, const std::vector< uint8_t > &blob )

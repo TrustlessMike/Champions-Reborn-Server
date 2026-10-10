@@ -35,9 +35,11 @@ public:
 class ResultLogin : public GenericResponse {
 private:
 	std::wstring m_sessionId;
+	std::wstring m_chatHandle;
 	int32_t m_reply;
 
 public:
-	ResultLogin( GenericRequest *request, int32_t reply, std::wstring sessionId );
+	// Champions of Norrath has no chat handles; it keeps getting the placeholder.
+	ResultLogin( GenericRequest *request, int32_t reply, std::wstring sessionId, std::wstring chatHandle = L"UNKNOWN DUMMY STRING" );
 	void Serialize( ByteBuffer &out ) const;
 };

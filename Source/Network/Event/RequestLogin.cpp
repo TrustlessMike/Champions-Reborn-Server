@@ -53,9 +53,19 @@ sptr_generic_response RequestLogin::ProcessLoginRTA( sptr_user user )
 	// Check if the user is already logged in
 	for( const auto &existingUser : UserManager.GetUserList() )
 	{
+		// Logging in again on the same connection is not a second login.
+		if( existingUser == user )
+		{
+			continue;
+		}
+
 		if( existingUser->m_username == m_username || existingUser->m_accountId == accountId )
 		{
-			return std::make_shared< ResultLogin >( this, FATAL_ERROR, L"" );
+			// The other connection may belong to a console that was switched off without
+			// closing it, and would otherwise lock the account until it times out. The
+			// newcomer has just proved it knows the password, so it takes over.
+			Log::Info( "[{}] logged in again, closing the earlier session", m_username );
+			UserManager.Disconnect( existingUser, "Logged in from another connection" );
 		}
 	}
 
@@ -75,7 +85,8 @@ sptr_generic_response RequestLogin::ProcessLoginRTA( sptr_user user )
 	// Notify friends about the user's online status
 	UserManager.NotifyFriendsOnlineStatus( user, true );
 
-	return std::make_shared< ResultLogin >( this, SUCCESS, user->m_sessionId );
+	// The game keeps the second string of the reply as its own chat handle.
+	return std::make_shared< ResultLogin >( this, SUCCESS, user->m_sessionId, user->m_chatHandle );
 }
 
 sptr_generic_response RequestLogin::ProcessRequest( sptr_socket socket, sptr_byte_stream stream )
@@ -105,10 +116,11 @@ sptr_generic_response RequestLogin::ProcessRequest( sptr_socket socket, sptr_byt
 	}
 }
 
-ResultLogin::ResultLogin( GenericRequest *request, int32_t reply, std::wstring sessionId ) : GenericResponse( *request )
+ResultLogin::ResultLogin( GenericRequest *request, int32_t reply, std::wstring sessionId, std::wstring chatHandle ) : GenericResponse( *request )
 {
 	m_reply = reply;
 	m_sessionId = sessionId;
+	m_chatHandle = chatHandle;
 }
 
 void ResultLogin::Serialize( ByteBuffer &out ) const
@@ -118,5 +130,5 @@ void ResultLogin::Serialize( ByteBuffer &out ) const
 	out.write_u32( m_reply );
 
 	out.write_encrypted_utf16( m_sessionId );
-	out.write_encrypted_utf16( L"UNKNOWN DUMMY STRING" );
+	out.write_encrypted_utf16( m_chatHandle );
 }

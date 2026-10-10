@@ -36,6 +36,11 @@ public:
     uint32_t m_characterId;
     uint32_t m_writePosition;
 
+    // The request that started the upload (0x58 or 0x5E). The game waits for the
+    // reply to that request until the last piece has been stored.
+    int16_t m_requestPacketId;
+    uint32_t m_requestTrackId;
+
     CharacterSlotData m_meta;
     std::vector< uint8_t > m_data;
 };

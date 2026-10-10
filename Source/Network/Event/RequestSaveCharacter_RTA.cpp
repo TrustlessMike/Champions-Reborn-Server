@@ -53,13 +53,23 @@ sptr_generic_response RequestSaveCharacter_RTA::ProcessRequest( sptr_socket sock
 
 	auto characterId = targetUser->m_characterId;
 
-	auto &saveManager = CharacterSaveManager::Get();
-	if( saveManager.BeginSaveTask( user, targetUser, characterId, m_metaData, CharacterSaveType::SAVE_CHARACTER ) )
+	if( characterId == 0 )
 	{
-		saveManager.AppendSaveData( user->m_sessionId, m_characterData, false );
+		Log::Error( "Target user has not created or loaded a character to save! [{}]", m_memberSessionId );
+		return std::make_shared< ResultSaveCharacter_RTA >( this, FATAL_ERROR );
 	}
 
-	return std::make_shared< ResultSaveCharacter_RTA >( this, SUCCESS );
+	auto &saveManager = CharacterSaveManager::Get();
+	if( !saveManager.BeginSaveTask( user, targetUser, characterId, m_metaData, CharacterSaveType::SAVE_CHARACTER, m_packetId, m_trackId )
+		|| !saveManager.AppendSaveData( user->m_sessionId, m_characterData, false ) )
+	{
+		saveManager.m_tasks.erase( user->m_sessionId );
+		return std::make_shared< ResultSaveCharacter_RTA >( this, FATAL_ERROR );
+	}
+
+	// No reply yet, see RequestCreateNewCharacter_RTA: the game keeps its "saving"
+	// state until this request is answered, and that has to wait for the last piece.
+	return nullptr;
 }
 
 ResultSaveCharacter_RTA::ResultSaveCharacter_RTA( GenericRequest *request, int32_t reply ) : GenericResponse( *request )

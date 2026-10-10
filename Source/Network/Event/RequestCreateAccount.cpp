@@ -57,6 +57,15 @@ sptr_generic_response RequestCreateAccount::ProcessRequest( sptr_socket socket, 
 		return std::make_shared< ResultCreateAccount >( this, ERROR_FATAL, L"" );
 	}
 
+	// The game refuses a whole list of names (room members, friends, ignored users)
+	// when one name in it has more than 15 characters, so a longer handle would
+	// break those lists for everyone who meets its owner.
+	if( m_chatHandle.length() > 15 )
+	{
+		Log::Error( "RequestCreateAccount::ProcessRequest() - Chat handle is longer than 15 characters." );
+		return std::make_shared< ResultCreateAccount >( this, ERROR_FATAL, L"" );
+	}
+
 	auto result = Database::Get().CreateNewAccount
 	(
 		Util::WideToUTF8( m_username ),

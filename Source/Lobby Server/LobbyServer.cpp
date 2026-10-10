@@ -7,6 +7,8 @@
 
 #include "Lobby Server/LobbyServer.hpp"
 
+#include <algorithm>
+
 #include "Game/RealmUserManager.hpp"
 #include "Network/Events.hpp"
 #include "configuration.hpp"
@@ -80,9 +82,14 @@ void LobbyServer::Stop()
 {
 	Log::Info( "Stopping Lobby Server..." );
 
-	for( auto &client : m_clientSockets )
 	{
-		client->send( NotifyForcedLogout() );
+		// The lobby thread is still running and owns this list.
+		std::lock_guard< std::mutex > stateLock( m_stateMutex );
+
+		for( auto &client : m_clientSockets )
+		{
+			client->send( NotifyForcedLogout() );
+		}
 	}
 
 	m_running = false;
@@ -94,12 +101,22 @@ void LobbyServer::Stop()
 
 sptr_socket LobbyServer::OpenListenerSocket( std::string ip, int32_t port, RealmGameType type )
 {
+#ifdef _WIN32
 	SOCKET sock = ::WSASocket( AF_INET, SOCK_STREAM, IPPROTO_TCP, NULL, 0, WSA_FLAG_OVERLAPPED );
+#else
+	SOCKET sock = ::socket( AF_INET, SOCK_STREAM, IPPROTO_TCP );
+#endif
 	if( sock == INVALID_SOCKET )
 	{
-		Log::Error( "WSASocket() failed on port {}", port );
+		Log::Error( "socket() failed on port {}", port );
 		return nullptr;
 	}
+
+#ifndef _WIN32
+	// Without this a restart fails to bind while old connections sit in TIME_WAIT.
+	int reuse = 1;
+	setsockopt( sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof( reuse ) );
+#endif
 
 	sockaddr_in service{};
 	service.sin_family = AF_INET;
@@ -144,36 +161,51 @@ sptr_socket LobbyServer::OpenListenerSocket( std::string ip, int32_t port, Realm
 
 void LobbyServer::Run()
 {
-	FD_SET readSet;
-	FD_SET writeSet;
-
-	timeval timeout = { 0, 1000 };
+	fd_set readSet;
+	fd_set writeSet;
 
 	while( m_running )
 	{
+		// select() may modify the timeout, and outside Windows it needs the highest fd.
+		timeval timeout = { 0, 1000 };
+		SOCKET maxFd = 0;
+
 		FD_ZERO( &readSet );
 		FD_ZERO( &writeSet );
 
 		FD_SET( m_conSocket->fd, &readSet );
 		FD_SET( m_rtaSocket->fd, &readSet );
+		maxFd = std::max( { maxFd, m_conSocket->fd, m_rtaSocket->fd } );
 
 		for( const auto &sock : m_gatewaySockets )
 		{
 			if( sock != nullptr && sock->fd != INVALID_SOCKET )
 			{
 				FD_SET( sock->fd, &readSet );
+				maxFd = std::max( maxFd, sock->fd );
 			}
 		}
 
-		CheckSocketProblem();
+		{
+			std::lock_guard< std::mutex > stateLock( m_stateMutex );
+			CheckSocketProblem();
+		}
 
 		for( const auto &client : m_clientSockets )
 		{
 			FD_SET( client->fd, &readSet );
-			FD_SET( client->fd, &writeSet );
+			maxFd = std::max( maxFd, client->fd );
+
+			// Only ask for writability when there is something to send; an idle
+			// socket is always writable and would turn this loop into a busy spin.
+			std::lock_guard< std::mutex > lock( client->write_mutex );
+			if( !client->m_pendingWriteBuffer.empty() )
+			{
+				FD_SET( client->fd, &writeSet );
+			}
 		}
 
-		auto result = select( 0, &readSet, &writeSet, NULL, &timeout );
+		auto result = select( static_cast< int >( maxFd ) + 1, &readSet, &writeSet, NULL, &timeout );
 
 		if( result == SOCKET_ERROR )
 		{
@@ -181,38 +213,55 @@ void LobbyServer::Run()
 			continue;
 		}
 
-		for( auto &sock : m_gatewaySockets )
-		{
-			if( sock == nullptr || sock->fd == INVALID_SOCKET )
-				continue;
+		// Users, games and rooms are also reached from the discovery thread, so
+		// everything below runs with the state lock held.
+		std::lock_guard< std::mutex > stateLock( m_stateMutex );
 
-			if( FD_ISSET( sock->fd, &readSet ) )
+		// Nothing a client sends may take the server down. Requests are already
+		// guarded one by one in HandleRequest; this is the last line of defence.
+		try
+		{
+			for( auto &sock : m_gatewaySockets )
 			{
-				AcceptConnection( sock );
-			}
-		}
+				if( sock == nullptr || sock->fd == INVALID_SOCKET )
+					continue;
 
-		if( FD_ISSET( m_conSocket->fd, &readSet ) )
-		{
-			AcceptConnection( m_conSocket );
-		}
-
-		if( FD_ISSET( m_rtaSocket->fd, &readSet ) )
-		{
-			AcceptConnection( m_rtaSocket );
-		}
-
-		for( auto &client : m_clientSockets )
-		{
-			if( FD_ISSET( client->fd, &readSet ) )
-			{
-				ReadSocket( client );
+				if( FD_ISSET( sock->fd, &readSet ) )
+				{
+					AcceptConnection( sock );
+				}
 			}
 
-			if( FD_ISSET( client->fd, &writeSet ) )
+			if( FD_ISSET( m_conSocket->fd, &readSet ) )
 			{
-				WriteSocket( client );
+				AcceptConnection( m_conSocket );
 			}
+
+			if( FD_ISSET( m_rtaSocket->fd, &readSet ) )
+			{
+				AcceptConnection( m_rtaSocket );
+			}
+
+			for( auto &client : m_clientSockets )
+			{
+				if( FD_ISSET( client->fd, &readSet ) )
+				{
+					ReadSocket( client );
+				}
+
+				if( FD_ISSET( client->fd, &writeSet ) )
+				{
+					WriteSocket( client );
+				}
+			}
+		}
+		catch( const std::exception &e )
+		{
+			Log::Error( "[LOBBY] Unhandled exception: {}", std::string( e.what() ) );
+		}
+		catch( ... )
+		{
+			Log::Error( "[LOBBY] Unhandled exception of unknown type" );
 		}
 	}
 }
@@ -227,7 +276,7 @@ void LobbyServer::CheckSocketProblem()
 		auto elapsed = std::chrono::duration_cast< std::chrono::seconds >( now - socket->last_recv_time );
 
 		// Check for client timeouts
-		if( elapsed.count() > 30 )
+		if( elapsed.count() > Config::client_timeout )
 		{
 			socket->flag.disconnected_forced = true;
 			Log::Info( "[LOBBY] Client Timeout : ({})", socket->remote_ip );
@@ -239,10 +288,27 @@ void LobbyServer::CheckSocketProblem()
 			socket->flag.disconnected_forced = true;
 		}
 
+		// Replies pile up here when the client does not read them. The largest thing
+		// the server ever sends is one character, about 20 KB.
+		if( socket->m_pendingWriteBuffer.size() > MAX_PENDING_WRITE_BYTES )
+		{
+			socket->flag.disconnected_forced = true;
+			Log::Info( "[LOBBY] Client is not reading its replies : ({})", socket->remote_ip );
+		}
+
 		if( socket->flag.disconnected_forced )
 		{
 			UserManager::Get().RemoveUser( socket );
 			Log::Info( "[LOBBY] Client Disconnected : ({})", socket->remote_ip );
+
+			// Close here rather than in the destructor: something else may still hold
+			// a reference to the socket, and the connection must not outlive this list.
+			if( socket->fd != INVALID_SOCKET )
+			{
+				closesocket( socket->fd );
+				socket->fd = INVALID_SOCKET;
+			}
+
 			it = m_clientSockets.erase( it );
 		}
 		else
@@ -255,7 +321,7 @@ void LobbyServer::CheckSocketProblem()
 void LobbyServer::AcceptConnection( sptr_socket srcSocket )
 {
 	sockaddr_in clientInfo{};
-	int32_t addrSize = sizeof( clientInfo );
+	socklen_t addrSize = sizeof( clientInfo );
 
 	SOCKET clientSocket = accept( srcSocket->fd, ( SOCKADDR * )&clientInfo, &addrSize );
 	if( clientSocket == INVALID_SOCKET )
@@ -264,8 +330,21 @@ void LobbyServer::AcceptConnection( sptr_socket srcSocket )
 		return;
 	}
 
+	// select() cannot watch a descriptor beyond its set size, and marking one in the
+	// set anyway writes outside it.
+	if( !SocketFitsSelect( clientSocket ) )
+	{
+		Log::Error( "Too many connections, refusing a new one" );
+		closesocket( clientSocket );
+		return;
+	}
+
 	auto new_socket = std::make_shared< RealmSocket >();
 	auto gameType = srcSocket->gameType;
+
+	// One client that sends requests and never reads the replies must not be able to
+	// make send() wait, and with it every other client: this thread serves them all.
+	SetSocketNonBlocking( clientSocket );
 
 	new_socket->fd = clientSocket;
 	new_socket->remote_addr = clientInfo;
@@ -293,7 +372,14 @@ void LobbyServer::ReadSocket( sptr_socket socket )
 
 	if( bytesReceived == SOCKET_ERROR )
 	{
-		Log::Info( "Socket Error [{}].", WSAGetLastError() );
+		// Client sockets do not block, and select() can report one readable that is not.
+		const int err = GetSocketError();
+		if( SocketWouldBlock( err ) )
+		{
+			return;
+		}
+
+		Log::Info( "Socket Error [{}].", err );
 		socket->flag.disconnected_forced = true;
 		return;
 	}
@@ -318,10 +404,13 @@ void LobbyServer::ReadSocket( sptr_socket socket )
 	{
 		int32_t packetSize = ntohl( *reinterpret_cast< const int32_t * >( &socket->m_pendingReadBuffer[ 0 ] ) );
 
-		if( packetSize <= 0 || packetSize > 2048 )
+		// The length counts its own four bytes, so 1 to 3 is as impossible as 0: the
+		// payload size computed below would come out negative.
+		if( packetSize < 4 || packetSize > 2048 )
 		{
 			Log::Error( "Invalid packet size: {}. Disconnecting client.", packetSize );
 			socket->flag.disconnected_wait = true;
+			socket->m_pendingReadBuffer.clear();
 			break;
 		}
 
@@ -338,7 +427,10 @@ void LobbyServer::ReadSocket( sptr_socket socket )
 			socket->m_pendingReadBuffer.begin() + packetSize
 		);
 
-		if( stream->m_buffer.size() == 0 ) break;
+		// A frame with no payload is the game's keep-alive: it sends one when it has
+		// sent nothing else for more than ten seconds. There is nothing to answer, but
+		// a request may follow it in the same read.
+		if( stream->m_buffer.size() == 0 ) continue;
 
 		// Process the packet
 		HandleRequest( socket, stream );
@@ -369,18 +461,20 @@ void LobbyServer::WriteSocket( sptr_socket socket )
 
 		if( bytesSent == SOCKET_ERROR )
 		{
-			const int err = WSAGetLastError();
-			if( err == WSAEWOULDBLOCK )
+			const int err = GetSocketError();
+			if( SocketWouldBlock( err ) )
 				break;
 
+			// Nothing more can be delivered, so there is nothing to wait for. (Waiting
+			// would also repeat this error on every pass until the client timed out.)
 			Log::Error( "Send failed: {}", err );
-			socket->flag.disconnected_wait = true;
+			socket->flag.disconnected_forced = true;
 			return;
 		}
 
 		if( bytesSent == 0 )
 		{
-			socket->flag.disconnected_wait = true;
+			socket->flag.disconnected_forced = true;
 			return;
 		}
 
@@ -402,21 +496,35 @@ void LobbyServer::WriteSocket( sptr_socket socket )
 
 void LobbyServer::HandleRequest( sptr_socket socket, sptr_byte_stream stream )
 {
-	auto packetId = stream->read< uint16_t >();
-	stream->set_position( 0 );
-
-	auto it = REQUEST_EVENT.find( packetId );
-	if( it == REQUEST_EVENT.end() )
+	// A message that is cut short, or whose length fields point past its end, makes
+	// the readers throw. Such a message is dropped; the connection and the server go on.
+	try
 	{
-		Log::Error( "[LOBBY] Unknown packet id : {}", packetId );
-		Log::Packet( stream->m_buffer, stream->m_buffer.size(), false );
-		return;
+		auto packetId = stream->read< uint16_t >();
+		stream->set_position( 0 );
+
+		auto it = REQUEST_EVENT.find( packetId );
+		if( it == REQUEST_EVENT.end() )
+		{
+			Log::Error( "[LOBBY] Unknown packet id : {}", packetId );
+			Log::Packet( stream->m_buffer, stream->m_buffer.size(), false );
+			return;
+		}
+
+		auto request = it->second();
+
+		if( auto res = request->ProcessRequest( socket, stream ) )
+		{
+			socket->send( res );
+		}
 	}
-
-	auto request = it->second();
-
-	if( auto res = request->ProcessRequest( socket, stream ) )
+	catch( const std::exception &e )
 	{
-		socket->send( res );
+		Log::Error( "[LOBBY] Malformed message from {} dropped : {}", socket->remote_ip, std::string( e.what() ) );
+		Log::Packet( stream->m_buffer, stream->m_buffer.size(), false );
+	}
+	catch( ... )
+	{
+		Log::Error( "[LOBBY] Malformed message from {} dropped", socket->remote_ip );
 	}
 }

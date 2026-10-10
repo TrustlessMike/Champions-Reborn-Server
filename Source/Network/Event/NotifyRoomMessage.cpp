@@ -1,4 +1,4 @@
-#include "Network\Event\NotifyRoomMessage.hpp"
+#include "Network/Event/NotifyRoomMessage.hpp"
 
 NotifyRoomMessage::NotifyRoomMessage( std::wstring roomName, std::wstring chatHandle, std::wstring message ) : GenericMessage( 0x3D )
 {

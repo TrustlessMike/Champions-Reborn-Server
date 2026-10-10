@@ -1,4 +1,4 @@
-#include "Network\Event\NotifyClientDiscovered.hpp"
+#include "Network/Event/NotifyClientDiscovered.hpp"
 #include "Game/RealmUser.hpp"
 
 NotifyClientDiscovered::NotifyClientDiscovered( sptr_user user ) : GenericMessage( 0x40 )

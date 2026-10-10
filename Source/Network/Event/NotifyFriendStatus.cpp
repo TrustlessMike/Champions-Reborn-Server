@@ -1,4 +1,4 @@
-#include "Network\Event\NotifyFriendStatus.hpp"
+#include "Network/Event/NotifyFriendStatus.hpp"
 
 NotifyFriendStatus::NotifyFriendStatus( std::wstring handle, bool status ) : GenericMessage( 0x2F )
 {

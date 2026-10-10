@@ -1,6 +1,7 @@
 #include "Game/RealmUserManager.hpp"
 #include "Game/GameSessionManager.hpp"
 #include "Game/ChatRoomManager.hpp"
+#include "Game/CharacterSaveManager.hpp"
 
 #include "Network/Event/NotifyForcedLogout.hpp"
 #include "Network/Event/NotifyFriendStatus.hpp"
@@ -62,6 +63,13 @@ void UserManager::RemoveUser( sptr_user user )
 
 	GameSessionManager::Get().OnDisconnectUser( user );
 	ChatRoomManager::Get().OnDisconnectUser( user );
+
+	// An upload this user had begun will never be finished, and its task would
+	// keep the user and its socket alive.
+	if( !user->m_sessionId.empty() )
+	{
+		CharacterSaveManager::Get().m_tasks.erase( user->m_sessionId );
+	}
 
 	NotifyFriendsOnlineStatus( user, false );
 
@@ -177,4 +185,25 @@ void UserManager::NotifyFriendsOnlineStatus( const sptr_user &user, bool onlineS
 			friendUser->sock->send( notifyFriend );
 		}
 	}
+}
+
+std::vector< std::wstring > UserManager::GetOnlineFriends( const sptr_user &user )
+{
+	std::vector< std::wstring > online;
+
+	if( !user )
+	{
+		return online;
+	}
+
+	for( const auto &friendHandle : user->m_friendList )
+	{
+		auto friendUser = FindUserByChatHandle( friendHandle );
+		if( friendUser && friendUser->m_isLoggedIn )
+		{
+			online.push_back( friendHandle );
+		}
+	}
+
+	return online;
 }

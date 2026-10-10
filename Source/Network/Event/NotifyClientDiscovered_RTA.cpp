@@ -1,4 +1,4 @@
-#include "Network\Event\NotifyClientDiscovered_RTA.hpp"
+#include "Network/Event/NotifyClientDiscovered_RTA.hpp"
 
 #include "Common/Constant.hpp"
 #include "Game/RealmUser.hpp"

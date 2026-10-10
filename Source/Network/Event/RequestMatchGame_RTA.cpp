@@ -2,6 +2,7 @@
 
 #include "Game/RealmUserManager.hpp"
 #include "Game/GameSessionManager.hpp"
+#include "configuration.hpp"
 #include "logging.hpp"
 
 void RequestMatchGame_RTA::Deserialize( sptr_byte_stream stream )
@@ -61,10 +62,12 @@ void ResultMatchGame_RTA::Serialize( ByteBuffer &out ) const
 			out.write_u32( game->m_gameId );
 	}
 
-	// Something about filtering.
+	// One blob per game, like every other array here. The game reads a length and
+	// that many bytes for each entry, so an empty blob is a single zero length.
 	out.write_u32( publicGameCount );
 	{
-		out.write_u32( 0 );	// Size
+		for( const auto &game : publicGameList )
+			out.write_u32( 0 );	// Size
 	}
 
 	out.write_u32( publicGameCount );
@@ -82,7 +85,7 @@ void ResultMatchGame_RTA::Serialize( ByteBuffer &out ) const
 	out.write_u32( publicGameCount );
 	{
 		for( const auto &game : publicGameList )
-			out.write_utf16( Util::UTF8ToWide( game->m_hostExternalAddr ) );
+			out.write_utf16( Util::UTF8ToWide( Config::ReportedAddress( game->m_hostExternalAddr, m_userIp ) ) );
 	}
 
 	out.write_u32( publicGameCount );

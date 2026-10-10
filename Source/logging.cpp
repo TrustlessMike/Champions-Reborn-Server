@@ -1,5 +1,41 @@
 #include "logging.hpp"
 
+#include <cstdio>
+#include <ctime>
+#include <filesystem>
+
+static struct tm LocalTime()
+{
+	time_t t; time( &t );
+	struct tm date_tm;
+#ifdef _WIN32
+	localtime_s( &date_tm, &t );
+#else
+	localtime_r( &t, &date_tm );
+#endif
+	return date_tm;
+}
+
+// Takes the Windows console attribute values the rest of this file uses.
+void Log::SetConsoleColor( int color )
+{
+#ifdef _WIN32
+	SetConsoleTextAttribute( GetStdHandle( STD_OUTPUT_HANDLE ), static_cast< WORD >( color ) );
+#else
+	static const bool isTerminal = isatty( fileno( stdout ) );
+	if( !isTerminal ) return;
+
+	switch( color )
+	{
+		case 10: printf( "\033[92m" ); break;	// green
+		case 11: printf( "\033[96m" ); break;	// cyan
+		case 12: printf( "\033[91m" ); break;	// red
+		case 13: printf( "\033[95m" ); break;	// magenta
+		default: printf( "\033[0m" ); break;
+	}
+#endif
+}
+
 static const char *LOG_PATH[] = {
 	"./generic",
 	"./debug",
@@ -20,11 +56,9 @@ const char *Log::GetTimeStamp()
 {
 	static char timestamp[ 64 ] = "";
 
-	time_t t; time( &t );
-	struct tm date_tm;
-	localtime_s( &date_tm, &t );
+	struct tm date_tm = LocalTime();
 
-	_snprintf_s( timestamp, _TRUNCATE, 63,
+	snprintf( timestamp, sizeof( timestamp ),
 				 "[%4d-%02d-%02d %02d:%02d:%02d]: ",
 				 ( date_tm.tm_year + 1900 ),
 				 ( date_tm.tm_mon + 1 ),
@@ -38,9 +72,7 @@ const char *Log::GetTimeStamp()
 
 void Log::CheckFileStatus( LOG_TYPE type )
 {
-	time_t t; time( &t );
-	struct tm date_tm;
-	localtime_s( &date_tm, &t );
+	struct tm date_tm = LocalTime();
 
 	if( current_open_hour != date_tm.tm_hour )
 	{
@@ -55,12 +87,15 @@ void Log::CheckFileStatus( LOG_TYPE type )
 	{
 		char szFileName[ 256 ] = "";
 
-		_snprintf_s( szFileName, _TRUNCATE, 255, "./log/%s/log_%04d.%02d.%02d_%02d.log",
+		snprintf( szFileName, sizeof( szFileName ), "./log/%s/log_%04d.%02d.%02d_%02d.log",
 					 LOG_PATH[ type ],
 					 ( date_tm.tm_year + 1900 ),
 					 ( date_tm.tm_mon + 1 ),
 					 date_tm.tm_mday,
 					 date_tm.tm_hour );
+
+		std::error_code ec;
+		std::filesystem::create_directories( std::filesystem::path( szFileName ).parent_path(), ec );
 
 		file_stream[ type ].open( szFileName, std::fstream::out | std::fstream::app );
 	}
@@ -70,8 +105,7 @@ void Log::WriteToLog( LOG_TYPE type, const std::string &message )
 {
 	std::lock_guard lock( log_lock );
 
-	HANDLE hConsole = GetStdHandle( STD_OUTPUT_HANDLE );
-	SetConsoleTextAttribute( hConsole, type + 10 );
+	SetConsoleColor( type + 10 );
 
 	switch( type )
 	{
@@ -81,11 +115,13 @@ void Log::WriteToLog( LOG_TYPE type, const std::string &message )
 		case log_error:   printf( "[ERROR]: " ); break;
 	}
 
-	SetConsoleTextAttribute( hConsole, 15 );
+	SetConsoleColor( 15 );
 	printf( "%s\n", message.c_str() );
+	fflush( stdout );
 
 	CheckFileStatus( type );
 	file_stream[ type ] << GetTimeStamp() << message << '\n';
+	file_stream[ type ].flush();
 }
 
 void Log::Packet( std::vector<uint8_t> p, size_t size, bool send )
@@ -96,17 +132,15 @@ void Log::Packet( std::vector<uint8_t> p, size_t size, bool send )
 
 	std::lock_guard<std::mutex> lock( log_lock );
 
-	HANDLE hConsole = GetStdHandle( STD_OUTPUT_HANDLE );
-
-	SetConsoleTextAttribute( hConsole, 15 );
+	SetConsoleColor( 15 );
 
 	uint16_t i = 0;
 	uint8_t line[ 16 ] = {};
 	uint8_t r = 0;
 
-	SetConsoleTextAttribute( hConsole, send ? 11 : 10 );
+	SetConsoleColor( send ? 11 : 10 );
 	printf( "(%s)(00|01|02|03|04|05|06|07|08|09|0A|0B|0C|0D|0E|0F)\n", send ? "SEND" : "RECV" );
-	SetConsoleTextAttribute( hConsole, 15 );
+	SetConsoleColor( 15 );
 
 	while( i < size )
 	{
@@ -132,9 +166,9 @@ void Log::Packet( std::vector<uint8_t> p, size_t size, bool send )
 		// Highlight packet type or flags
 		if( i == 0 || i == 1 )
 		{
-			SetConsoleTextAttribute( hConsole, send ? 11 : 10 );
+			SetConsoleColor( send ? 11 : 10 );
 			printf( "%02X ", p[ i ] );
-			SetConsoleTextAttribute( hConsole, 15 );
+			SetConsoleColor( 15 );
 		}
 		else
 		{
@@ -159,17 +193,16 @@ void Log::Packet( std::vector<uint8_t> p, size_t size, bool send )
 	}
 
 	printf( "\n\n" );
+	fflush( stdout );
 }
 
 void Log::ToFile( std::string prefix, std::vector<uint8_t> p, size_t size )
 {
 	static char timestamp[ 64 ] = "";
 
-	time_t t; time( &t );
-	struct tm date_tm;
-	localtime_s( &date_tm, &t );
+	struct tm date_tm = LocalTime();
 
-	_snprintf_s( timestamp, _TRUNCATE, 63,
+	snprintf( timestamp, sizeof( timestamp ),
 				 "%02d-%02d-%02d.packet.bin",
 				 date_tm.tm_hour,
 				 date_tm.tm_min,

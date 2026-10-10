@@ -2,7 +2,8 @@
 
 #include <cstdint>
 #include <string>
-#include <WinSock2.h>
+
+#include "Platform.hpp"
 
 namespace Util
 {
@@ -20,6 +21,13 @@ namespace Util
 
 	std::string IPFromAddr( const sockaddr_in &addr );
 
+	// Classification of dotted IPv4 text. Anything that is not four numbers from
+	// 0 to 255 separated by dots is neither private nor public.
+	bool IsPrivateOrLoopbackIPv4( const std::string &ip );
+	bool IsPublicIPv4( const std::string &ip );
+
+	// Wide strings in this codebase always hold UTF-16 code units, one per wchar_t,
+	// whatever sizeof( wchar_t ) is on the host. That is what the game puts on the wire.
 	std::string WideToUTF8( const std::wstring &wstr );
 	std::wstring UTF8ToWide( const std::string &str );
 }

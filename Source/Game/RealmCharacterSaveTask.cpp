@@ -12,6 +12,8 @@ CharacterSaveTask::CharacterSaveTask( CharacterSaveType Type, uint32_t character
 
 	m_characterId = characterId;
 	m_writePosition = 0;
+	m_requestPacketId = 0;
+	m_requestTrackId = 0;
 
 	m_data.reserve(4096);
 }
@@ -33,6 +35,14 @@ bool CharacterSaveTask::AppendData( const std::vector< uint8_t > &data )
 	if( data.empty() )
 	{
 		Log::Error( "AppendTailData called with empty data!" );
+		return false;
+	}
+
+	// Every zero byte of the 19,504-byte character is followed by a count, so the
+	// packed form can never be longer than twice that plus its four header bytes.
+	if( m_data.size() + data.size() > CHARACTER_DATA_SIZE * 2 + 4 )
+	{
+		Log::Error( "Character data is larger than any character can be!" );
 		return false;
 	}
 

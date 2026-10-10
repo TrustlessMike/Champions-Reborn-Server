@@ -1,10 +1,11 @@
-#include "Network\Event\NotifyClientRequestConnect_RTA.hpp"
+#include "Network/Event/NotifyClientRequestConnect_RTA.hpp"
 
 #include "Game/RealmUser.hpp"
+#include "configuration.hpp"
 
-NotifyClientRequestConnect_RTA::NotifyClientRequestConnect_RTA( sptr_user user ) : GenericMessage( 0x65 )
+NotifyClientRequestConnect_RTA::NotifyClientRequestConnect_RTA( sptr_user user, const std::string &recipientIp ) : GenericMessage( 0x65 )
 {
-	this->m_remoteAddr = user->m_discoveryAddr;
+	this->m_remoteAddr = Config::ReportedAddress( user->m_discoveryAddr, recipientIp );
 	this->m_remotePort = user->m_discoveryPort;
 
 	this->m_localAddr = user->m_localAddr;

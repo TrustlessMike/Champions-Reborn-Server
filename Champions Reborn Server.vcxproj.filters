@@ -227,6 +227,15 @@
     <ClInclude Include="Include\Network\Event\RequestGetSocialListUpdate.hpp">
       <Filter>Header Files\Network\Events</Filter>
     </ClInclude>
+    <ClInclude Include="Include\Network\Event\RequestGetIgnoreList.hpp">
+      <Filter>Header Files\Network\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="Include\Network\Event\RequestGetAccountInfo.hpp">
+      <Filter>Header Files\Network\Events</Filter>
+    </ClInclude>
+    <ClInclude Include="Include\Network\Event\RequestSetRoomBanner.hpp">
+      <Filter>Header Files\Network\Events</Filter>
+    </ClInclude>
     <ClInclude Include="Include\Network\Event\RequestLeaveRoom.hpp">
       <Filter>Header Files\Network\Events</Filter>
     </ClInclude>
@@ -446,6 +455,15 @@
       <Filter>Source Files\Network\Event</Filter>
     </ClCompile>
     <ClCompile Include="Source\Network\Event\RequestGetSocialListUpdate.cpp">
+      <Filter>Source Files\Network\Event</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Network\Event\RequestGetIgnoreList.cpp">
+      <Filter>Source Files\Network\Event</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Network\Event\RequestGetAccountInfo.cpp">
+      <Filter>Source Files\Network\Event</Filter>
+    </ClCompile>
+    <ClCompile Include="Source\Network\Event\RequestSetRoomBanner.cpp">
       <Filter>Source Files\Network\Event</Filter>
     </ClCompile>
     <ClCompile Include="Source\Network\Event\RequestLeaveRoom.cpp">

@@ -39,6 +39,9 @@ public:
 
 	void NotifyFriendsOnlineStatus( const sptr_user &user, bool onlineStatus );
 
+	// Those of the user's friends who are logged in right now.
+	std::vector< std::wstring > GetOnlineFriends( const sptr_user &user );
+
 private:
 	std::mutex m_mutex;
 	std::vector< sptr_user > m_users;

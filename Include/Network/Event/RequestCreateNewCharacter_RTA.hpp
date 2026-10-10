@@ -31,8 +31,9 @@ public:
 class ResultCreateNewCharacter_RTA : public GenericResponse {
 private:
 	int32_t m_reply;
+	uint32_t m_characterId;
 
 public:
-	ResultCreateNewCharacter_RTA( GenericRequest *request, int32_t reply );
+	ResultCreateNewCharacter_RTA( GenericRequest *request, int32_t reply, uint32_t characterId = 0 );
 	void Serialize( ByteBuffer &out ) const;
 };

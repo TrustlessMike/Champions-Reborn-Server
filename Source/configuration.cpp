@@ -1,5 +1,8 @@
 #include "configuration.hpp"
 
+#include "Common/Utility.hpp"
+#include "logging.hpp"
+
 bool Config::Load( std::string filename )
 {
 	service_ip = "0.0.0.0";
@@ -7,6 +10,8 @@ bool Config::Load( std::string filename )
 	con_lobby_port = 40900;
 	rta_lobby_port = 40910;
 	discovery_port = 10101;
+	client_timeout = 120;
+	report_public_ip_for_lan_consoles = false;
 
 	// Read configuration from ini file
 	std::ifstream file( filename );
@@ -33,6 +38,12 @@ bool Config::Load( std::string filename )
 		std::string key = line.substr( 0, pos );
 		std::string value = line.substr( pos + 1 );
 
+		// A file saved with Windows line endings leaves a carriage return on every value.
+		while( !value.empty() && ( value.back() == '\r' || value.back() == ' ' || value.back() == '\t' ) )
+		{
+			value.pop_back();
+		}
+
 		if( key == "service_ip" )
 		{
 			service_ip = value;
@@ -53,6 +64,14 @@ bool Config::Load( std::string filename )
 		{
 			discovery_port = std::stoi( value );
 		}
+		else if( key == "client_timeout" )
+		{
+			client_timeout = std::stoi( value );
+		}
+		else if( key == "report_public_ip_for_lan_consoles" )
+		{
+			report_public_ip_for_lan_consoles = ( value == "1" || value == "true" || value == "on" || value == "yes" );
+		}
 	}
 
 	// If public_ip is not explicitly set, fall back to service_ip.
@@ -63,5 +82,45 @@ bool Config::Load( std::string filename )
 		public_ip = service_ip;
 	}
 
+	// The game sends a frame at least every 11 seconds, so anything much below that
+	// would drop healthy connections.
+	if( client_timeout < 15 )
+	{
+		Log::Warn( "client_timeout of {} seconds is too short, using 15.", client_timeout );
+		client_timeout = 15;
+	}
+
+	// The game reads peer addresses as four numbers with dots, so a host name cannot
+	// stand in for one, and a private address would be no better than the observed one.
+	if( report_public_ip_for_lan_consoles && !Util::IsPublicIPv4( public_ip ) )
+	{
+		Log::Error( "report_public_ip_for_lan_consoles needs public_ip to be a public IPv4 address "
+					"in dotted form, not [{}]. The setting is ignored.", public_ip );
+		report_public_ip_for_lan_consoles = false;
+	}
+
 	return true;
+}
+
+std::string Config::ReportedAddress( const std::string &observedIp, const std::string &recipientIp )
+{
+	if( !report_public_ip_for_lan_consoles )
+	{
+		return observedIp;
+	}
+
+	// Only a console on the server's own network is observed at a private address.
+	if( !Util::IsPrivateOrLoopbackIPv4( observedIp ) )
+	{
+		return observedIp;
+	}
+
+	// A player on that same network reaches the console directly at the observed
+	// address and may not be able to reach it through the router at all.
+	if( Util::IsPrivateOrLoopbackIPv4( recipientIp ) )
+	{
+		return observedIp;
+	}
+
+	return public_ip;
 }

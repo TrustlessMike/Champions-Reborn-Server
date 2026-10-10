@@ -1,8 +1,11 @@
 #include "stdafx.h"
 
 #include <atomic>
+#include <chrono>
 #include <csignal>
-#include <winsock2.h>
+#include <thread>
+
+#include "Platform.hpp"
 
 #include "logging.hpp"
 #include "configuration.hpp"
@@ -33,6 +36,7 @@ static void ShowStartup()
 
 static bool NetworkStartup()
 {
+#ifdef _WIN32
 	WORD wVersionRequest = MAKEWORD( 2, 2 );
 	WSADATA wsaData;
 
@@ -41,6 +45,10 @@ static bool NetworkStartup()
 		Log::Error( "WSAStartup() failed" );
 		return false;
 	}
+#else
+	// A client that drops mid-send must not kill the server.
+	std::signal( SIGPIPE, SIG_IGN );
+#endif
 
 	return true;
 }

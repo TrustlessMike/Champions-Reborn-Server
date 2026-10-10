@@ -24,6 +24,7 @@
 /* 0016 */	#include "Event/RequestLogin.hpp"
 /* 0017 */	#include "Event/RequestLogout.hpp"
 /* 0018 */	#include "Event/RequestMatchGame.hpp"
+/* 0019 */	#include "Event/RequestSetRoomBanner.hpp"
 
 /* 001C */	#include "Event/RequestRemoveFriend.hpp"
 /* 001D */	#include "Event/RequestRemoveIgnore.hpp"
@@ -56,6 +57,8 @@
 /* 0060 */	#include "Event/RequestCancelGame_RTA.hpp"
 /* 0061 */	#include "Event/RequestGetSocialListInitial.hpp"
 /* 0062 */	#include "Event/RequestGetSocialListUpdate.hpp"
+/* 0063 */	#include "Event/RequestGetIgnoreList.hpp"
+/* 0064 */	#include "Event/RequestGetAccountInfo.hpp"
 
 /* 0066 */	#include "Event/RequestDoClientDiscovery_RTA.hpp"
 
@@ -140,6 +143,11 @@ const std::map< int16_t, std::function< std::unique_ptr< GenericRequest >() > > 
 	{ 0x0018, []() -> std::unique_ptr< GenericRequest >
 		{
 			return std::make_unique< RequestMatchGame >();
+		}
+	},
+	{ 0x0019, []() -> std::unique_ptr< GenericRequest >
+		{
+			return std::make_unique< RequestSetRoomBanner >();
 		}
 	},
 	{ 0x001C, []() -> std::unique_ptr< GenericRequest >
@@ -265,6 +273,16 @@ const std::map< int16_t, std::function< std::unique_ptr< GenericRequest >() > > 
 	{ 0x0062, []() -> std::unique_ptr< GenericRequest >
 		{
 			return std::make_unique< RequestGetSocialListUpdate >();
+		}
+	},
+	{ 0x0063, []() -> std::unique_ptr< GenericRequest >
+		{
+			return std::make_unique< RequestGetIgnoreList >();
+		}
+	},
+	{ 0x0064, []() -> std::unique_ptr< GenericRequest >
+		{
+			return std::make_unique< RequestGetAccountInfo >();
 		}
 	},
 	{ 0x0066, []() -> std::unique_ptr< GenericRequest >

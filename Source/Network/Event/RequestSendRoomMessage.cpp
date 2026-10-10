@@ -3,7 +3,7 @@
 #include "Game/RealmUserManager.hpp"
 #include "Game/ChatRoomManager.hpp"
 
-#include "Network\Event\NotifyRoomMessage.hpp"
+#include "Network/Event/NotifyRoomMessage.hpp"
 #include "logging.hpp"
 
 void RequestSendRoomMessage::Deserialize( sptr_byte_stream stream )

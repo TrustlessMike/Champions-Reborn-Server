@@ -6,7 +6,8 @@
 #include <mutex>
 #include <sstream>
 #include <type_traits>
-#include <windows.h>
+
+#include "Common/Utility.hpp"
 
 class Log {
 private:
@@ -28,12 +29,10 @@ private:
 
 	static std::string WideToMulti( const std::wstring &input )
 	{
-		if( input.empty() ) return "";
-		int sizeNeeded = WideCharToMultiByte( CP_UTF8, 0, input.data(), ( int )input.size(), nullptr, 0, nullptr, nullptr );
-		std::string result( sizeNeeded, 0 );
-		WideCharToMultiByte( CP_UTF8, 0, input.data(), ( int )input.size(), std::data( result ), sizeNeeded, nullptr, nullptr );
-		return result;
+		return Util::WideToUTF8( input );
 	}
+
+	static void SetConsoleColor( int color );
 
 	template<typename T>
 	static std::string ToString( const T &value )

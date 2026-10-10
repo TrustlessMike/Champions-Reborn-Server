@@ -25,7 +25,8 @@ sptr_generic_response RequestGetNetCharacterData_RTA::ProcessRequest( sptr_socke
 
 	auto result = Database::Get().LoadCharacterData( user->m_accountId, m_characterId );
 
-	if( !result )
+	// A character without data would produce no reply at all below.
+	if( !result || result->m_data.empty() )
 	{
 		Log::Error( "Failed to load character data for account ID: " + std::to_string( user->m_accountId ) + ", character ID: " + std::to_string( m_characterId ) );
 		return std::make_shared< ResultGetNetCharacterData_RTA >( this, FATAL_ERROR );

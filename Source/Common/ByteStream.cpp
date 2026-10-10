@@ -1,7 +1,8 @@
 #include "Common/ByteStream.hpp"
 
-#include <codecvt>
+#include <cstring>
 #include <span>
+#include <stdexcept>
 
 ByteBuffer::ByteBuffer( const std::vector< uint8_t > &data )
 {
@@ -44,26 +45,6 @@ void ByteBuffer::resize( uint32_t size )
 void ByteBuffer::shrink_to_fit()
 {
 	m_buffer.shrink_to_fit();
-}
-
-template < typename T >
-void ByteBuffer::write( T value )
-{
-	write_bytes( ( uint8_t * )&value, sizeof( T ) );
-}
-
-template < typename T >
-T ByteBuffer::read()
-{
-	if( m_position >= m_buffer.size() )
-	{
-		return (T)0;
-	}
-
-	T value = *( T * )&m_buffer[ m_position ];
-	m_position += sizeof( T );
-
-	return value;
 }
 
 void ByteBuffer::write_utf8( const std::string &str, std::optional<uint32_t> length )
@@ -212,12 +193,9 @@ std::string ByteBuffer::read_utf8( std::optional<uint32_t> length )
 		length = read_u32();
 	}
 
-	if( m_position + length.value() > m_buffer.size() )
-	{
-		throw std::runtime_error( "read_utf8: Attempt to read past end of buffer" );
-	}
+	require( length.value(), "read_utf8" );
 
-	std::string value( reinterpret_cast< const char * >( &m_buffer[ m_position ] ), length.value() );
+	std::string value( reinterpret_cast< const char * >( m_buffer.data() + m_position ), length.value() );
 	m_position += length.value();
 
 	return value;
@@ -230,12 +208,10 @@ std::wstring ByteBuffer::read_utf16( std::optional<uint32_t> length )
 		length = read_u32();
 	}
 
-	uint32_t byteLength = length.value() * 2;
+	// size_t, so that a count of 0x80000000 or more cannot wrap round to a small number.
+	const size_t byteLength = static_cast< size_t >( length.value() ) * 2;
 
-	if( m_position + byteLength > m_buffer.size() )
-	{
-		throw std::runtime_error( "read_utf16: Attempt to read past end of buffer" );
-	}
+	require( byteLength, "read_utf16" );
 
 	std::wstring value;
 	value.reserve( length.value() );
@@ -253,12 +229,14 @@ std::wstring ByteBuffer::read_utf16( std::optional<uint32_t> length )
 std::string ByteBuffer::read_sz_utf8()
 {
 	std::string value;
-	while( m_buffer[ m_position ] != 0 )
+	while( m_position < m_buffer.size() && m_buffer[ m_position ] != 0 )
 	{
 		value.push_back( m_buffer[ m_position ] );
 		m_position++;
 	}
 
+	// The terminator has to be there too.
+	require( 1, "read_sz_utf8" );
 	m_position++;
 
 	return value;
@@ -267,12 +245,14 @@ std::string ByteBuffer::read_sz_utf8()
 std::wstring ByteBuffer::read_sz_utf16()
 {
 	std::wstring value;
-	while( m_buffer[ m_position ] != 0 || m_buffer[ m_position + 1 ] != 0 )
+	while( m_position + 1 < m_buffer.size() && ( m_buffer[ m_position ] != 0 || m_buffer[ m_position + 1 ] != 0 ) )
 	{
 		value.push_back( m_buffer[ m_position ] | ( m_buffer[ m_position + 1 ] << 8 ) );
 		m_position += 2;
 	}
 
+	// The terminator has to be there too.
+	require( 2, "read_sz_utf16" );
 	m_position += 2;
 
 	return value;
@@ -288,12 +268,20 @@ std::string ByteBuffer::read_encrypted_utf8( bool hasBlockLength )
 		uint32_t blockLength = read_u32() * 2;
 		decryptedLength = read_u32();
 		encryptedLength = blockLength - 4;
+
+		// The block length counts the four bytes just read, so anything smaller is malformed.
+		if( blockLength < 4 )
+		{
+			throw std::out_of_range( "read_encrypted_utf8: Invalid block length" );
+		}
 	}
 	else
 	{
 		decryptedLength = read_u32();
 		encryptedLength = Util::round_up( decryptedLength, 16 );
 	}
+
+	require( encryptedLength, "read_encrypted_utf8" );
 
 	std::span< const uint8_t > encryptedBuffer( m_buffer.data() + m_position, encryptedLength );
 
@@ -322,12 +310,20 @@ std::wstring ByteBuffer::read_encrypted_utf16( bool hasBlockLength )
 		uint32_t blockLength = read_u32() * 2;
 		decryptedLength = read_u32();	// This length is already multiplied by sizeof(wchar_t)
 		encryptedLength = blockLength - 4;
+
+		// The block length counts the four bytes just read, so anything smaller is malformed.
+		if( blockLength < 4 )
+		{
+			throw std::out_of_range( "read_encrypted_utf16: Invalid block length" );
+		}
 	}
 	else
 	{
 		decryptedLength = read_u32();
 		encryptedLength = Util::round_up( decryptedLength, 16 );
 	}
+
+	require( encryptedLength, "read_encrypted_utf16" );
 
 	std::span< const uint8_t > encryptedBuffer( m_buffer.data() + m_position, encryptedLength );
 
@@ -341,8 +337,13 @@ std::wstring ByteBuffer::read_encrypted_utf16( bool hasBlockLength )
 	// Decrypt the buffer
 	std::vector< uint8_t > decryptedBuffer = RealmCrypt::decryptSymmetric( encryptedBuffer );
 
-	std::wstring result( decryptedLength / 2, L'\0' );
-	std::memcpy( result.data(), decryptedBuffer.data(), decryptedLength );
+	std::wstring result;
+	result.reserve( decryptedLength / 2 );
+
+	for( size_t i = 0; i + 1 < decryptedLength && i + 1 < decryptedBuffer.size(); i += 2 )
+	{
+		result.push_back( static_cast< wchar_t >( decryptedBuffer[ i ] | ( decryptedBuffer[ i + 1 ] << 8 ) ) );
+	}
 
 	return result;
 }
@@ -371,6 +372,9 @@ void ByteBuffer::write_encrypted_bytes( const std::vector<uint8_t> &value )
 
 std::vector<uint8_t> ByteBuffer::read_bytes( uint32_t length )
 {
+	// Checked before allocating: the length comes straight from the client.
+	require( length, "read_bytes" );
+
 	std::vector<uint8_t> value( length, 0 );
 
 	std::copy( m_buffer.begin() + m_position, m_buffer.begin() + m_position + length, value.begin() );
