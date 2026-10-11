@@ -8,7 +8,8 @@ How to read this file:
 
 - "The game" is the Return to Arms executable SLUS_209.73. An address such as 0x3841dc is a
   function in it; that is where the correct behaviour was read. Nothing here was run against
-  a real console or an emulator.
+  a real console or an emulator. (Sections 16 to 18 came a day later and start from what
+  the game did against this server in an emulator; see there.)
 - "Before the fix" results come from running the new test against a build of the tree as it
   was before these changes (rebuilt in a scratch directory from `git archive` plus the port's
   diff). That build failed 17 of the 33 steps and its process died in step 28.
@@ -345,6 +346,132 @@ Consequences for the server:
   leaves them), and one of them broke the link. They were left where they are.
 - bin/config.ini: the two new settings, with comments.
 
+## 16. A console that lost its connection could not come back (S1)
+
+Sections 16 to 18 are of 2026-10-11. S1 to S3 are the numbers of
+`docs/issues/live-rig.md` 19.12, where the real game was first run against this server (in
+an emulator) and these three things were seen or read. The fixes themselves were not run
+with the game; their checks are described at the end of section 18.
+
+- Seen with the game (live-rig 19.9): when its connection is gone, the game connects again
+  by itself, gateway (0x43) then lobby (0x27), and carries on under the session id it had.
+  It does not log in again. On the game list its next request is the periodic 0x55.
+- Wrong: a session lived and died with its connection. The user is found by its socket
+  (`UserManager::FindUserBySocket`), and `CheckSocketProblem` removed it when the connection
+  went, so the game's new connection had a user that was not logged in.
+  `RequestMatchGame_RTA::ProcessRequest` sent such a user 0x41, answered with result 0 and
+  the list of open games, and closed the connection. The game connected again and asked
+  again, every 650 frames or so, until the player dismissed the notice on the screen.
+- How the other handlers treat a user that is not logged in: none of them disconnects it.
+  0x58 and 0x5E refuse with result 1, 0x5A with 2 because the session id it is sent is
+  not the connection's; the others do not look at the login state at all (see "Not
+  fixed").
+- Changed:
+  - Source/Game/RealmUserManager.cpp and its header. `OnConnectionLost` (new): when the
+    connection of a logged-in Return to Arms user ends without a logout, the session id,
+    the account, the names, the current character and the address the connection came
+    from are kept for `client_timeout` seconds. `ResumeSession` (new): the user of a
+    connection that is not logged in becomes that session's user again (friend and
+    ignore lists are loaded as at a login). `ForgetLostSessions` (new).
+  - Source/Lobby Server/LobbyServer.cpp. `CheckSocketProblem` calls `OnConnectionLost`.
+    `HandleRequest` calls `ResumeSession` (new) before the handler, for every request
+    that starts with a session id: all but 0x06, 0x0F, 0x16, 0x27, 0x42, 0x43 and 0x64
+    (the game's header writer 0x37cd14 against 0x37cc64). So the first request after
+    the reconnect picks the session up whichever it is: 0x55 on the game list, a
+    character save (0x5E) during play.
+  - Source/Network/Event/RequestLogin.cpp, `ProcessLoginRTA`: a login ends a lost
+    session of the same account, as it already ended a connected one.
+  - Source/Network/Event/RequestMatchGame_RTA.cpp and its header: a connection that is
+    still not logged in gets result 7 with eight empty arrays. No 0x41, and the
+    connection stays open.
+- What may pick a session up. The id alone proves little: it travels under a key every
+  console has, and the players of a game are told each other's (0x5E, 0x5F). So:
+  - only a session whose connection is gone. One that a connection still holds stays
+    with that connection, wherever the id comes from;
+  - only from the address the lost connection came from, the condition a discovery
+    datagram has to meet;
+  - only for `client_timeout` seconds, the time a connection that says nothing keeps its
+    session; and once;
+  - not after a logout (0x17), and not after the account has logged in again.
+  Two consoles behind one router have one address. One of them, knowing the other's id,
+  can take over the other's session in the moment after that one's connection is lost.
+- Why result 7 for the rest. `SRSClient_setResultText` (0x32d498) is called with the result
+  by every reply handler of the game (43 call sites; the 0x55 handler at 0x329484, which
+  then leaves its list alone when the result is not 0). It picks the text for the result,
+  and for four results it also notifies the connect handler (the object at client+0x84)
+  with −6, which is what a lost connection (0x32e8b8) and notification 0x41 (0x3301f0)
+  end in as well: 7, 1000, 1001 and 1002. On the disc the texts are "Invalid Session ID!"
+  for 7 and "The client has timed out", "The server has disconnected", "Not connected to
+  the server" for the other three, which the game produces itself. So 7 is the one result
+  a server can send that the game takes as "this session is over". The connection is left
+  open because closing it is what made the game connect and ask again.
+- The eight empty arrays: the game's reply parser reads the arrays whatever the result is
+  (0x3841dc case 0x55, from 0x3864c0), passes the result of the header on with them
+  (0x3867b4), and reports its own result 45 instead when one is missing (0x386800).
+- Not established: what the connect handler does with −6 was not followed (it is called
+  through a delegate, 0x3d2350). live-rig 19.9 saw the notice that the connection was
+  lost, and from it the way back to the network menu and a normal login.
+- Test: steps 1 to 9 of `lobby_fix_checks.py`. Before the fix all nine fail: every list
+  request under an old or unknown id gets result 0, the open games, a 0x41 of 14 bytes
+  and a closed connection, and a save sent first is refused at once.
+
+## 17. Notification 0x41 was two bytes too long (S2)
+
+- Wrong: `u16` id, `u32` 0, `u32` 0: fourteen bytes with the length. The game reads a
+  `u16` where the second `u32` was.
+- Changed: `NotifyForcedLogout::Serialize`, Source/Network/Event/NotifyForcedLogout.cpp.
+  On the wire now `00 00 00 0c 41 00 00 00 00 00 00 00`.
+- Established by: the notification parser 0x387388 reads the id with the two-byte reader
+  0x382f8c and a `u32` with 0x383098; its case for 0x41 (0x388654) calls 0x382f8c once
+  more and hands the value to `SRSClient_onForcedLogout` (0x3301f0), which overwrites the
+  register holding it without reading it. The value has no meaning to the game; 0 is sent.
+- Test: step 10 of `lobby_fix_checks.py`, and step 31 of `tools/lobby_e2e_test.py`, which
+  finds the 0x41 among the frames of the closed connection.
+
+## 18. A server that had stood still timed everybody out (S3)
+
+- Seen (live-rig 19.9): the computer the server runs on was put to sleep for longer than
+  `client_timeout`. When it woke, every client was dropped at once.
+- Wrong, twice. `LobbyServer::Run` called `CheckSocketProblem` before it read the
+  sockets, so a client whose data was waiting was judged on the time of its previous
+  message. And the judgment compared two readings of `std::chrono::steady_clock`, which on
+  that computer (macOS) goes on counting while it sleeps: the pause counted as silence of
+  the clients, though nobody could have been heard. Whether the clock does the same on
+  Windows and Linux was not looked up; the fix does not depend on it. Reading first is
+  not enough by itself: the data of a client on another machine is not waiting when the
+  server wakes, it comes with that client's next retransmission.
+- Changed, Source/Lobby Server/LobbyServer.cpp and its header:
+  - `Run`: `CheckSocketProblem` is called after the sockets have been read and written,
+    in the same pass.
+  - `CheckSocketProblem`: when more than `MAX_SERVER_PAUSE_SECONDS` (5) lie between two
+    calls, the server itself did not run in between. That time is added to every
+    connection's time of last receipt, but never beyond the present, so a connection
+    keeps the idle time it had before the pause and nothing else. A line in the log says
+    how long the server stood still.
+- The gateway connections are in the same list and loop, so this covers them. The
+  discovery thread has no timeout.
+- Nothing else in the server measures time, except the new limit of section 16, which is
+  deliberately left as it is: a session lost before a long pause is not kept through it.
+- Test: step 11 of `lobby_fix_checks.py`. The server process is stopped (SIGSTOP) for
+  five seconds longer than its timeout and continued. One client sent a keep-alive frame
+  and a request meanwhile, one sent nothing and speaks afterwards, one stays silent for
+  good. Wanted: the first is answered, the second keeps its connection, the third is
+  dropped one timeout after the server ran again and not before. Run with a timeout of
+  15 and of 120 seconds. Before the fix all three were closed when the server ran
+  again, the first with its request unread.
+
+**The checks of 16 to 18.** `lobby_fix_checks.py` is a client script of its own, built on
+the console of `tools/lobby_e2e_test.py`, because it needs what that test does not ask
+for: a server with a short `client_timeout`, a second address of the test machine, and a
+server process that may be stopped. All 11 steps pass against the fixed server and all
+11 fail against a build of the tree as it was. `tools/lobby_e2e_test.py` passes as before,
+16 steps and 33 with `--extended`, also against a build with the address and
+undefined-behaviour sanitizers, which reported nothing in either script. These runs were
+made with a second instance on ports of its own while the first kept running; the gateway
+ports are fixed in the source, so the instance under test was built with other numbers in
+`LobbyServer::Start`, and step 30 of the extended test, which goes to 40800–40817 whatever
+`--gateway-port` says, was redirected to them.
+
 ## Changes to the test client
 
 - It can be started as documented again: Python 3.13+ `argparse` imports the standard
@@ -387,6 +514,34 @@ Consequences for the server:
 - Notification 0x2F (friend status) is still sent to the wrong set of users, but the game's
   handler for it is an empty function (0x330028), so it does not matter.
 
+Added with sections 16 to 18:
+
+- None of the three was tried with the real game, and the Windows build was again not
+  compiled (no new source files, nothing POSIX-only; the new code keeps clear of
+  `std::min` and `std::max`, which need care under `<windows.h>`).
+- A request from a connection that is not logged in is still handled by most handlers as
+  if it were: only 0x55 (result 7), 0x58 and 0x5E (result 1) and 0x5A (result 2) refuse
+  it. Such a connection can open a game (tried: 0x54 gets result 0), enter a chat room
+  without a name, or ask for the characters of account −1. Checking the login in one
+  place needs a refusal the game can parse for every request, since its parser reads the
+  body whatever the result is. Whether 0x58 and 0x5E should answer 7 as well was left
+  open: during play the game would then be told "fatal" where it is now told that a save
+  failed, and what it does with that was not seen.
+- A console whose connection has died without the server noticing (the server learns of
+  it by the timeout, or by a failed send) comes back while the old connection still
+  holds the session. It is told 7 until the old connection has timed out; logging in
+  again takes the account over at once.
+- A character save for another player (0x5E naming that player's session) still fails
+  while that player's connection is lost and has not come back.
+- The texts behind the result codes are on the disc (string keys `clientText1` to
+  `clientText68`; 0x32d498 picks the key). Results 0 to 36 use the key numbered one
+  higher, 40 to 63 the key numbered two lower, 37 to 39 and 500 to 503 the texts about
+  login name, password, date of birth and e-mail. So result 1, this server's general
+  failure, reads "Timed out"; 2, which a taken game name gets, "A database error
+  occured"; 38, the project's `GAME_NAME_IN_USE`, "Invalid Birthdate"; 40 "This session
+  already has a game"; 46 "Invalid game name"; and 45, the game's own result for a reply
+  it cannot parse, "A protocol violation has occurred". No code was changed for this.
+
 ## Found wrong or missing in docs/lobby-protocol.md
 
 (The document itself was not edited.)
@@ -406,3 +561,11 @@ Consequences for the server:
 - Section 10, D3: what the game does with the second login string is in 3 above.
 - Section 10, D9 and D10: tried here against the old build; both are real.
 - Notification table: 0x2F is parsed and then ignored by the game.
+- Notification table (added with 17): the body of 0x41 is one `u16`, which is what the
+  server sends now.
+- Section 7 (added with 16): 0x55 is no longer "always 0"; a connection without a login
+  gets 7. And "the server identifies the user by the TCP connection and ignores the
+  session it is sent" has an exception now: on a connection without a login the session
+  id of the request is looked up among the sessions whose connection was lost.
+- Section 2 (added with 16): the result codes and their texts, as in "Not fixed" above;
+  result 7 is the one the game treats as the end of its session.

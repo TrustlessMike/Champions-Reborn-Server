@@ -69,6 +69,10 @@ sptr_generic_response RequestLogin::ProcessLoginRTA( sptr_user user )
 		}
 	}
 
+	// The same goes for a session whose connection was lost a moment ago and which
+	// is waiting to be picked up again: this login replaces it.
+	UserManager.ForgetLostSessions( accountId );
+
 	// Login Success
 	user->m_isLoggedIn = true;
 	user->m_username = m_username;

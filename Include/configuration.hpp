@@ -14,7 +14,8 @@ public:
 	static inline uint16_t rta_lobby_port;
 	static inline uint16_t discovery_port;
 
-	// Seconds a connection may stay silent before it is dropped.
+	// Seconds a connection may stay silent before it is dropped. A session whose
+	// connection was lost can be picked up again for as long (UserManager::ResumeSession).
 	static inline int32_t client_timeout;
 
 	// When set, a console the server observes at a private or loopback address is

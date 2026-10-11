@@ -1,4 +1,7 @@
 #include "Game/RealmUserManager.hpp"
+
+#include <algorithm>
+
 #include "Game/GameSessionManager.hpp"
 #include "Game/ChatRoomManager.hpp"
 #include "Game/CharacterSaveManager.hpp"
@@ -7,6 +10,7 @@
 #include "Network/Event/NotifyFriendStatus.hpp"
 #include "Database/Database.hpp"
 #include "Common/Constant.hpp"
+#include "configuration.hpp"
 #include "logging.hpp"
 
 UserManager::UserManager()
@@ -126,6 +130,123 @@ void UserManager::Disconnect( sptr_user user, const std::string reason )
 	Log::Debug( "DisconnectUser : [{}]. Reason: {}", user->m_sessionId, reason );
 
 	RemoveUser( user );
+}
+
+void UserManager::OnConnectionLost( const sptr_socket socket )
+{
+	auto user = FindUserBySocket( socket );
+	if( user == nullptr )
+	{
+		return;
+	}
+
+	// Champions of Norrath has no accounts, and every console of it logs in alike.
+	if( user->m_isLoggedIn && user->m_gameType == RealmGameType::RETURN_TO_ARMS && user->m_accountId > 0 && !user->m_sessionId.empty() )
+	{
+		LostSession lost;
+
+		lost.m_sessionId = user->m_sessionId;
+		lost.m_remoteIp = socket->remote_ip;
+		lost.m_accountId = user->m_accountId;
+		lost.m_username = user->m_username;
+		lost.m_chatHandle = user->m_chatHandle;
+		lost.m_characterId = user->m_characterId;
+		lost.m_character = user->m_character;
+		lost.m_lostAt = std::chrono::steady_clock::now();
+
+		std::lock_guard< std::mutex > lock( m_mutex );
+
+		// An account has one session at a time, and a lost one is kept only as long
+		// as a silent connection would have been.
+		m_lostSessions.erase( std::remove_if( m_lostSessions.begin(), m_lostSessions.end(), [ & ]( const LostSession &other )
+		{
+			return other.m_accountId == lost.m_accountId
+				|| lost.m_lostAt - other.m_lostAt > std::chrono::seconds( Config::client_timeout );
+		} ), m_lostSessions.end() );
+
+		m_lostSessions.push_back( lost );
+	}
+
+	RemoveUser( user );
+}
+
+void UserManager::ForgetLostSessions( int64_t accountId )
+{
+	std::lock_guard< std::mutex > lock( m_mutex );
+
+	m_lostSessions.erase( std::remove_if( m_lostSessions.begin(), m_lostSessions.end(), [ & ]( const LostSession &lost )
+	{
+		return lost.m_accountId == accountId;
+	} ), m_lostSessions.end() );
+}
+
+bool UserManager::ResumeSession( const sptr_user &user, const std::wstring &sessionId )
+{
+	if( !user || user->m_isLoggedIn || user->sock == nullptr || user->m_gameType != RealmGameType::RETURN_TO_ARMS )
+	{
+		return false;
+	}
+
+	if( sessionId.length() != MAX_SESSION_ID_LENGTH )
+	{
+		return false;
+	}
+
+	LostSession lost;
+
+	{
+		std::lock_guard< std::mutex > lock( m_mutex );
+
+		const auto now = std::chrono::steady_clock::now();
+		m_lostSessions.erase( std::remove_if( m_lostSessions.begin(), m_lostSessions.end(), [ & ]( const LostSession &other )
+		{
+			return now - other.m_lostAt > std::chrono::seconds( Config::client_timeout );
+		} ), m_lostSessions.end() );
+
+		// Only a session whose connection is gone can be picked up. One that a
+		// connection still holds stays with that connection.
+		auto it = std::find_if( m_lostSessions.begin(), m_lostSessions.end(), [ & ]( const LostSession &other )
+		{
+			return other.m_sessionId == sessionId;
+		} );
+
+		if( it == m_lostSessions.end() )
+		{
+			return false;
+		}
+
+		// The id alone proves little: it travels under a key every console has, and
+		// the players of a game are told each other's. What the server knows besides
+		// is the address the session was used from, so it can only be picked up from
+		// there - the condition a discovery datagram has to meet as well.
+		if( it->m_remoteIp != user->sock->remote_ip )
+		{
+			Log::Error( "Session of [{}] presented from another address ({}), refused", it->m_username, user->sock->remote_ip );
+			return false;
+		}
+
+		// Picked up once; from here on it is this connection's session.
+		lost = *it;
+		m_lostSessions.erase( it );
+	}
+
+	user->m_isLoggedIn = true;
+	user->m_sessionId = lost.m_sessionId;
+	user->m_accountId = lost.m_accountId;
+	user->m_username = lost.m_username;
+	user->m_chatHandle = lost.m_chatHandle;
+	user->m_characterId = lost.m_characterId;
+	user->m_character = lost.m_character;
+
+	// The rest is what a login does.
+	user->m_friendList = Database::Get().LoadFriends( lost.m_accountId );
+	user->m_ignoreList = Database::Get().LoadIgnores( lost.m_accountId );
+
+	NotifyFriendsOnlineStatus( user, true );
+
+	Log::Info( "[{}] picked its session up again on a new connection", user->m_username );
+
+	return true;
 }
 
 sptr_user UserManager::FindUserBySessionId( const std::wstring &sessionId )

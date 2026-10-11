@@ -164,6 +164,8 @@ void LobbyServer::Run()
 	fd_set readSet;
 	fd_set writeSet;
 
+	m_lastSocketCheck = std::chrono::steady_clock::now();
+
 	while( m_running )
 	{
 		// select() may modify the timeout, and outside Windows it needs the highest fd.
@@ -184,11 +186,6 @@ void LobbyServer::Run()
 				FD_SET( sock->fd, &readSet );
 				maxFd = std::max( maxFd, sock->fd );
 			}
-		}
-
-		{
-			std::lock_guard< std::mutex > stateLock( m_stateMutex );
-			CheckSocketProblem();
 		}
 
 		for( const auto &client : m_clientSockets )
@@ -263,6 +260,11 @@ void LobbyServer::Run()
 		{
 			Log::Error( "[LOBBY] Unhandled exception of unknown type" );
 		}
+
+		// Only now, with everything the clients had sent taken in, is a silent
+		// connection timed out. Checking before the read dropped clients whose data
+		// was waiting in the socket when the server had not run for a while.
+		CheckSocketProblem();
 	}
 }
 
@@ -270,9 +272,35 @@ void LobbyServer::CheckSocketProblem()
 {
 	auto now = std::chrono::steady_clock::now();
 
+	// The idle timeout is for a client that says nothing while the server listens.
+	// When the host computer has been asleep, or the process stopped, the clock has
+	// moved on by the whole pause although nobody could have been heard. Such a pause
+	// shows as a long gap between two checks, and is given back to every client.
+	const auto sinceLastCheck = now - m_lastSocketCheck;
+	const bool serverPaused = sinceLastCheck > std::chrono::seconds( MAX_SERVER_PAUSE_SECONDS );
+	m_lastSocketCheck = now;
+
+	if( serverPaused )
+	{
+		Log::Info( "[LOBBY] Server stood still for {} seconds, not counted as client silence",
+			std::chrono::duration_cast< std::chrono::seconds >( sinceLastCheck ).count() );
+	}
+
 	for( auto it = m_clientSockets.begin(); it != m_clientSockets.end(); )
 	{
 		auto &socket = *it;
+
+		if( serverPaused )
+		{
+			socket->last_recv_time += sinceLastCheck;
+
+			// Not beyond the present: a client heard since the pause is simply up to date.
+			if( socket->last_recv_time > now )
+			{
+				socket->last_recv_time = now;
+			}
+		}
+
 		auto elapsed = std::chrono::duration_cast< std::chrono::seconds >( now - socket->last_recv_time );
 
 		// Check for client timeouts
@@ -298,7 +326,8 @@ void LobbyServer::CheckSocketProblem()
 
 		if( socket->flag.disconnected_forced )
 		{
-			UserManager::Get().RemoveUser( socket );
+			// Not a logout: a user that was logged in can pick its session up again.
+			UserManager::Get().OnConnectionLost( socket );
 			Log::Info( "[LOBBY] Client Disconnected : ({})", socket->remote_ip );
 
 			// Close here rather than in the destructor: something else may still hold
@@ -513,6 +542,8 @@ void LobbyServer::HandleRequest( sptr_socket socket, sptr_byte_stream stream )
 
 		auto request = it->second();
 
+		ResumeSession( socket, stream, packetId );
+
 		if( auto res = request->ProcessRequest( socket, stream ) )
 		{
 			socket->send( res );
@@ -527,4 +558,49 @@ void LobbyServer::HandleRequest( sptr_socket socket, sptr_byte_stream stream )
 	{
 		Log::Error( "[LOBBY] Malformed message from {} dropped", socket->remote_ip );
 	}
+}
+
+void LobbyServer::ResumeSession( sptr_socket socket, sptr_byte_stream stream, uint16_t packetId )
+{
+	// A game that has lost its connection connects again by itself and carries on
+	// under the session id it had, without logging in again. Every request it sends
+	// once it is logged in starts with that id; the ones of the connect and login
+	// sequence do not.
+	switch( packetId )
+	{
+		case 0x0006:	// Create account
+		case 0x000F:	// Realm statistics
+		case 0x0016:	// Login
+		case 0x0027:	// Encryption key
+		case 0x0042:	// Rules
+		case 0x0043:	// Server address
+		case 0x0064:	// Account details
+			return;
+	}
+
+	auto user = UserManager::Get().FindUserBySocket( socket );
+	if( user == nullptr || user->m_isLoggedIn )
+	{
+		return;
+	}
+
+	std::wstring sessionId;
+
+	try
+	{
+		stream->read_u16();		// Message id
+		stream->read_u32();		// Tracking number
+		stream->read_u32();		// Version
+
+		sessionId = stream->read_encrypted_utf16();
+	}
+	catch( const std::exception & )
+	{
+		// Too short to hold a session id. The request's own handler deals with that.
+	}
+
+	// The request is handled next, and must find the message as it arrived.
+	stream->set_position( 0 );
+
+	UserManager::Get().ResumeSession( user, sessionId );
 }

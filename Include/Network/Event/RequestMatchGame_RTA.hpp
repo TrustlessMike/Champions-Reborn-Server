@@ -8,6 +8,12 @@
 
 class RequestMatchGame_RTA : public GenericRequest
 {
+private:
+	enum REPLY {
+		SUCCESS = 0,
+		INVALID_SESSION = 7,
+	};
+
 public:
 	static std::unique_ptr< RequestMatchGame_RTA > Create()
 	{
@@ -20,9 +26,10 @@ public:
 
 class ResultMatchGame_RTA : public GenericResponse {
 private:
+	int32_t m_reply;
 	std::string m_userIp;
 
 public:
-	ResultMatchGame_RTA( GenericRequest *request, std::string userIp );
+	ResultMatchGame_RTA( GenericRequest *request, int32_t reply, std::string userIp );
 	void Serialize( ByteBuffer &out ) const;
 };
