@@ -10,8 +10,12 @@ adds, on branch `macos-port`:
 
 The protocol notes and the two-client test used here live in
 [champions-return-to-arms-re](https://github.com/TrustlessMike/champions-return-to-arms-re)
-(`docs/lobby-protocol.md`, `tools/lobby_e2e_test.py`). Nothing in this fork has been run
-against the real games yet; the Windows build was not compiled after these changes.
+(`docs/lobby-protocol.md`, `tools/lobby_e2e_test.py`). Return to Arms itself has been run
+against this fork, in an emulator (Play!) and not on a console: account, log in, lobby
+characters, hosting, joining, launch, play with its saves, and a lost connection
+(`docs/issues/live-rig.md` sections 19 and 20 there; FIXES.md sections 16 to 19 come from
+those runs). Champions of Norrath has not been run against it, and the Windows build was
+not compiled after these changes.
 
 ---
 

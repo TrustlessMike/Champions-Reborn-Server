@@ -9,14 +9,18 @@ How to read this file:
 - "The game" is the Return to Arms executable SLUS_209.73. An address such as 0x3841dc is a
   function in it; that is where the correct behaviour was read. Nothing here was run against
   a real console or an emulator. (Sections 16 to 18 came a day later and start from what
-  the game did against this server in an emulator; see there.)
+  the game did against this server in an emulator; see there. Section 19 came after
+  those three had themselves been run with the game in that emulator. The runs are
+  `docs/issues/live-rig.md` sections 19 and 20 of the repository named in the README.)
 - "Before the fix" results come from running the new test against a build of the tree as it
   was before these changes (rebuilt in a scratch directory from `git archive` plus the port's
   diff). That build failed 17 of the 33 steps and its process died in step 28.
 - The test is `tools/lobby_e2e_test.py`. `python3 tools/lobby_e2e_test.py 127.0.0.1` runs
   16 steps, `--extended` 33. Both pass in full against the fixed server, also with
   `report_public_ip_for_lan_consoles=1`, and also against a build with the address and
-  undefined-behaviour sanitizers, which reported nothing.
+  undefined-behaviour sanitizers, which reported nothing. (Since section 19 `--extended`
+  runs 40: seven steps were added behind the others, and the first 33 kept their
+  numbers.)
 - D1 to D10 are the defect numbers of `docs/lobby-protocol.md` section 10.
 
 Build: `sh build.sh` in `server/upstream`. The Windows project files list the three new
@@ -472,6 +476,87 @@ ports are fixed in the source, so the instance under test was built with other n
 `LobbyServer::Start`, and step 30 of the extended test, which goes to 40800–40817 whatever
 `--gateway-port` says, was redirected to them.
 
+## 19. A session picked up again was not in its chat room (S6)
+
+Sections 19 and 20 are of 2026-10-11 as well, but after sections 16 to 18 had been run
+with the real game (`docs/issues/live-rig.md` section 20). S6 is that section's number
+for this one. The fix itself was not run with the game; its check is the test below.
+
+- Seen with the game (live-rig 20.1): its connection was cut on the game list, it came
+  back by itself, and its next 0x55 picked the session up (section 16). The game's own
+  notice of the lost connection was on the screen, and the way out of that notice is out
+  of the lobby: the game sent 0x15 for the public room it had been in, and got result 1.
+  It ignores that result.
+- Wrong: a lost connection removes its user like any other, and that takes the user out
+  of its chat rooms (`ChatRoomManager::OnDisconnectUser`). `ResumeSession` brought back
+  the account, the names and the character, but not the room. So the session was there
+  again and outside its room: a line said in the room did not reach the console, a line
+  of its own was refused (0x22, result 1), a player entering the room was not shown it,
+  and its 0x15 failed.
+- Changed: Source/Game/RealmUserManager.cpp and its header. `OnConnectionLost` keeps the
+  user's public room with the lost session (`m_publicRoomId`, the number a user's public
+  room is kept by anyway, read before `RemoveUser` leaves the room). `ResumeSession`
+  enters that room again (`ChatRoomManager::JoinRoom`) once the user has its names
+  back, unless the connection has entered a public room of its own in the meantime.
+- Why the room is put back, and 0x15 not simply answered with 0 for a room the user is
+  not in. Either would have made the one reply that was seen come out right. But the
+  game does not know that it was gone: it carries on under its session id with the room
+  on its screen, does not ask for the rooms or enter one again (after it came back its
+  requests were 0x55, and then the 0x15), and leaves the room when it moves on. So the
+  session it expects to have is one that is in the room. A server that says yes to the
+  0x15 and keeps the user outside leaves everything before the 0x15 wrong, on the
+  server's side and for the other players in the room; and it would say yes to any
+  console leaving any room it never was in. The result of 0x15 is the least of it.
+- Not put back: the chat room of a game. A lost connection ends the user's part in its
+  game (section 8: a member gives its place back, a host's game is removed), a session
+  that is picked up comes back without a game, and the room belongs to the game. In
+  play there is nothing to put back either way: the game's room is closed when the game
+  starts, and the consoles leave the public room then (live-rig 19.10).
+- A user that really is not in the room still gets result 1 for 0x15, as before: a
+  connection that never logged in, a session lost for longer than `client_timeout`.
+- Established by: live-rig 20.1 and 20.5 for what the game sends and that it ignores the
+  result; the rest by reading the server.
+- Test: step 40 of `tools/lobby_e2e_test.py` (new). Two consoles enter the first public
+  room; one loses its connection, comes back as the game does and has its session picked
+  up by a 0x55. Wanted: a line the other says in the room reaches it, a line of its own
+  is accepted, the other, going out and in again, is shown it among the members, and
+  its 0x15 gets result 0. Before the fix all four fail, the 0x15 with result 1 as the
+  game saw it.
+
+## 20. The Windows build and `std::max`
+
+- Wrong, by reading: `LobbyServer::Run` called `std::max( a, b )` in three places.
+  `Include/Platform.hpp` includes `<windows.h>` on Windows, the project does not define
+  `NOMINMAX`, and `<windows.h>` then defines `max( a, b )` as a macro. The three calls
+  work out the highest descriptor for `select()`, which only the macOS/Linux build
+  needs; nothing says they were ever compiled on Windows.
+- Changed: Source/Lobby Server/LobbyServer.cpp, `Run`: `std::max< SOCKET >( … )` in the
+  three places. A function-like macro is only expanded when its name is followed by a
+  parenthesis, so naming the template argument keeps it out. It is how this code base
+  writes such calls already (`std::min<size_t>( … )` further down in the same file and
+  in RequestGetCharacterData_RTA.cpp, `(std::min)( … )` in PasswordHash.hpp); no other
+  plain call of `std::min` or `std::max` is left in Source or Include.
+- Checked, short of a Windows compiler: every source the build uses was run through the
+  compiler here for syntax with the two macros of `<windows.h>` defined in front of it.
+  The tree as it was fails in exactly these three lines; the tree as it is passes.
+  **The Windows build was still not compiled.**
+- Also: the comment on the minimum of `client_timeout` in Source/configuration.cpp said
+  that the game sends a frame at least every 11 seconds. Seen with the real game
+  (live-rig 19.4) an idle console sends its empty frame about every 760 frames, some 13
+  seconds at full speed and more when the game runs slowly. The comment says so now;
+  the minimum of 15 was left. The same sentence is in the comment of bin/config.ini,
+  which was not touched (a copy of the server was running from that directory).
+
+**The checks of 19 and 20.** With a second instance on ports of its own, as before:
+`tools/lobby_e2e_test.py` passes 16 of 16 and, with `--extended`, 40 of 40 against the
+fixed server, also built with the address and undefined-behaviour sanitizers, which
+reported nothing. Against a build of the tree as it was before section 19 it passes 39
+of 40: step 40 fails. Against a build of the tree as it was before section 16 it passes
+32 of 40: step 31 fails on the 14 bytes of the old 0x41, and steps 34 to 40 fail.
+`lobby_fix_checks.py`, unchanged, still passes its 11 steps against the fixed server.
+The instances under test still had to be built with other gateway numbers in
+`LobbyServer::Start`; step 30 now goes where `--gateway-port` points.
+
 ## Changes to the test client
 
 - It can be started as documented again: Python 3.13+ `argparse` imports the standard
@@ -480,6 +565,24 @@ ports are fixed in the source, so the instance under test was built with other n
   reply to every message, which is what the server used to do, not what the game expects.
 - 0x61 and 0x62 are read as the game reads them (see 11).
 - New steps 22 and 26 to 31, and more checks inside 17 to 19, 21, 23 and 25.
+
+Added with section 19:
+
+- Seven steps behind the two logouts, 34 to 40, each with consoles and accounts of its
+  own, so that steps 1 to 33 are what they were. 34 to 39 are the six checks of
+  `lobby_fix_checks.py` that need no hold on the server process: a session picked up by
+  0x55 and by a character save first, and an id nobody has, the id of a session that
+  logged out, of one replaced by a newer login and of one a connection still holds, each
+  to be answered with result 7 and nothing else (section 16). 40 is the chat room of
+  section 19. The checks that need a short `client_timeout`, a second address or a
+  server that may be stopped stay in `lobby_fix_checks.py`.
+- Step 31 compares the 0x41 it provokes with the twelve bytes of section 17, and wants it
+  to be the last thing on the closed connection, instead of only looking for its id.
+- Step 30 takes the sixteen gateway ports from `--gateway-port` (Return to Arms from that
+  number, Champions of Norrath from ten below) instead of always going to 40800–40817.
+  With the default it does what it did. The test now sends nothing to a port it was not
+  given or handed by the server, so a second instance can be tested beside a running one
+  without redirecting anything.
 
 ## Not fixed, not verified
 
@@ -542,9 +645,45 @@ Added with sections 16 to 18:
   already has a game"; 46 "Invalid game name"; and 45, the game's own result for a reply
   it cannot parse, "A protocol violation has occurred". No code was changed for this.
 
+Added with sections 19 and 20:
+
+- "Nothing was tried with the real game" above no longer holds for the Return to Arms
+  path that `docs/issues/live-rig.md` sections 19 and 20 ran: account, log in, lobby
+  characters, host, list, join, start, saves in play, and sections 16 to 18 (in an
+  emulator, Play!; no console). On that path no reply was refused or misread by the
+  game, and the fixes of sections 3, 5, 6 and 7 were each seen to do what they were made
+  for. It still holds for private games, a list of two or more games, friends, ignore,
+  messages, cancelling, deleting a character, the LAN setting, and Champions of Norrath.
+- Section 19 was not tried with the real game, and the Windows build was again not
+  compiled.
+- A session lost while its console sat in a game's room before the start comes back
+  without its game and without the game's chat room. If the game then asks to leave that
+  room, it is told 1, as it was for the public room before section 19. What the game
+  does in that situation was not seen; keeping a game through a lost connection would
+  be the fix, and is a larger change.
+- A console whose last request before the loss was a 0x15 that never arrived is put
+  back into a room it believes it has left. Should it then enter that room again on the
+  same session, 0x0C answers 1 ("already in it") although it is in the room; should it
+  enter another, the server has it in both and takes it out of only the newer one when
+  it goes. Seen from the game neither can happen in the lobby, where a lost connection
+  leaves only the way out (live-rig 20.1); in play it would take a connection lost in
+  the moment the game starts. Answering 0x0C with the room for a user that is already
+  in it, and leaving the old public room on entering a new one, would close both; not
+  done here, because it changes 0x0C for everybody.
+- While a user is gone, the consoles already in its room are not told, and not told
+  when it is back either: this server sends no notification about who is in a public
+  room (the game parses several, 0x2A to 0x3C, whose meanings were not worked out).
+- bin/config.ini still says that a console sends an empty frame "every 11 seconds or
+  so" (section 20).
+- The minimum of `client_timeout`, 15 seconds, leaves about two seconds over the 760
+  frames between two empty frames of an idle game at full speed (live-rig 19.4), and
+  nothing when the game runs slower than that. The default of 120 is not affected.
+
 ## Found wrong or missing in docs/lobby-protocol.md
 
-(The document itself was not edited.)
+(The document itself was not edited when this list was written. On 2026-10-11, with
+section 19, it was brought in line with these points and with what the real game did in
+`docs/issues/live-rig.md` sections 13, 19 and 20.)
 
 - Section 2 and 13: the idle keep-alive is not unknown; see 13 above.
 - Section 2: a reply is matched by tracking number and parsed by the type of the *pending

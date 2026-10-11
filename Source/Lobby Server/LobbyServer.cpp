@@ -175,23 +175,25 @@ void LobbyServer::Run()
 		FD_ZERO( &readSet );
 		FD_ZERO( &writeSet );
 
+		// std::max is called with its template argument throughout this function:
+		// <windows.h> defines max( a, b ) as a macro, which a plain call would expand.
 		FD_SET( m_conSocket->fd, &readSet );
 		FD_SET( m_rtaSocket->fd, &readSet );
-		maxFd = std::max( { maxFd, m_conSocket->fd, m_rtaSocket->fd } );
+		maxFd = std::max< SOCKET >( { maxFd, m_conSocket->fd, m_rtaSocket->fd } );
 
 		for( const auto &sock : m_gatewaySockets )
 		{
 			if( sock != nullptr && sock->fd != INVALID_SOCKET )
 			{
 				FD_SET( sock->fd, &readSet );
-				maxFd = std::max( maxFd, sock->fd );
+				maxFd = std::max< SOCKET >( maxFd, sock->fd );
 			}
 		}
 
 		for( const auto &client : m_clientSockets )
 		{
 			FD_SET( client->fd, &readSet );
-			maxFd = std::max( maxFd, client->fd );
+			maxFd = std::max< SOCKET >( maxFd, client->fd );
 
 			// Only ask for writability when there is something to send; an idle
 			// socket is always writable and would turn this loop into a busy spin.

@@ -82,8 +82,11 @@ bool Config::Load( std::string filename )
 		public_ip = service_ip;
 	}
 
-	// The game sends a frame at least every 11 seconds, so anything much below that
-	// would drop healthy connections.
+	// A game with nothing to say sends an empty frame once it has sent nothing else for
+	// more than ten of its own seconds, which it counts in lobby-task calls. Seen with
+	// the real game: about every 760 frames, some 13 seconds at full speed and more
+	// when the game runs slowly. Anything below this minimum would drop healthy
+	// connections. The same time is how long a lost session can be picked up again.
 	if( client_timeout < 15 )
 	{
 		Log::Warn( "client_timeout of {} seconds is too short, using 15.", client_timeout );

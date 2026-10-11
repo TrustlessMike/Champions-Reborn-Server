@@ -38,8 +38,8 @@ public:
 
 	// A connection that is not logged in sent a request under this session id. When
 	// the id is that of a lost session and comes from the address the session was
-	// used from, the connection's user becomes that session's user again. Any other
-	// id changes nothing and returns false.
+	// used from, the connection's user becomes that session's user again, in the
+	// public chat room it was in. Any other id changes nothing and returns false.
 	bool ResumeSession( const sptr_user &user, const std::wstring &sessionId );
 
 	// The account has logged in anew: no earlier session of it may be picked up.
@@ -66,6 +66,7 @@ private:
 		std::wstring	m_chatHandle;
 		int32_t			m_characterId;		// The character a save would go to
 		sptr_realm_character m_character;
+		int32_t			m_publicRoomId;		// The public chat room it was in, or -1
 		std::chrono::steady_clock::time_point m_lostAt;
 	};
 

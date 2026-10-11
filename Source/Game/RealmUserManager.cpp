@@ -152,6 +152,7 @@ void UserManager::OnConnectionLost( const sptr_socket socket )
 		lost.m_chatHandle = user->m_chatHandle;
 		lost.m_characterId = user->m_characterId;
 		lost.m_character = user->m_character;
+		lost.m_publicRoomId = user->m_publicRoomId;		// RemoveUser, below, leaves it
 		lost.m_lostAt = std::chrono::steady_clock::now();
 
 		std::lock_guard< std::mutex > lock( m_mutex );
@@ -243,6 +244,18 @@ bool UserManager::ResumeSession( const sptr_user &user, const std::wstring &sess
 	user->m_ignoreList = Database::Get().LoadIgnores( lost.m_accountId );
 
 	NotifyFriendsOnlineStatus( user, true );
+
+	// The game does not know that it was gone: it still shows the public chat room it
+	// was in, does not ask to enter it again (0x0C), and asks to leave it (0x15) when
+	// it moves on. So the session comes back in that room. Not so the chat room of a
+	// game: the lost connection took the user out of its game, and that is not undone.
+	if( user->m_publicRoomId < 0 )
+	{
+		if( const auto room = ChatRoomManager::Get().FindRoom( lost.m_publicRoomId ) )
+		{
+			ChatRoomManager::Get().JoinRoom( user, room->m_name );
+		}
+	}
 
 	Log::Info( "[{}] picked its session up again on a new connection", user->m_username );
 
