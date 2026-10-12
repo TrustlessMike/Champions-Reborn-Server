@@ -838,6 +838,59 @@ parameters. What follows was found by reading and then shown.
 - bin/config.ini was not touched (a server was running from that directory). The new
   settings all have defaults; SECURITY.md lists them.
 
+## 31. A relay that speaks for many players (new setting, 2026-10-12)
+
+- The players of the browser build reach the server through a relay that holds their
+  connections. Where that relay connects from the server's own public address, the
+  limits per address of sections 24 and 25 take all its players for one stranger: 16
+  connections, one request budget, one allowance of password checks, and 20 new accounts
+  and then one every three minutes, for everybody together.
+- New setting `trusted_addresses` (config.ini; empty by default): up to 16 IPv4
+  addresses that the limits per address leave alone in the way they leave loop-back and
+  private addresses alone, whatever `limits_for_local_addresses` says.
+  Source/configuration.cpp (`ReadAddressList`, `Config::ExemptFromAddressLimits`),
+  Include/configuration.hpp, `Util::IPv4ToNumber` (Source/Common/Utility.cpp), and the
+  one line of `LobbyServer::AcceptConnection` that decides whether a connection is
+  exempt. An entry that is not four numbers with dots (a name, a range, 0.0.0.0, a
+  number over 255) is left out with an error in the log and is never read as something
+  wider. The server names every listed address in a warning each time it starts.
+- **Everything that connects from a listed address shares no limit at all.**
+  SECURITY.md, "A relay that speaks for many players", says what that gives away, what
+  the relay of the reverse-engineering repository does in the server's place today
+  (connections: yes; requests, password checks and accounts: no) and what it would have
+  to do. Nothing else changes: with the list empty the server decides as before.
+- Checked against instances of their own on ports of their own on 127.0.0.1, started
+  from scratch directories, built with the flags of `build.sh` into a scratch directory;
+  the server in `bin/` was not touched. The machine was busy with other work throughout
+  (load average 90 to 500).
+  - Without the setting: `lobby_e2e_test.py` 16 of 16 and `--extended` 40 of 40,
+    `lobby_fix_checks.py` 11 of 11 (an instance with `client_timeout=15`),
+    `lobby_fuzz.py --mode abuse` 10 of 10; and with `limits_for_local_addresses=1`,
+    `--mode limits` 5 of 5 (16 connections kept, 46 of 120 wrong passwords answered in
+    20 s, 19 of 60 accounts, 557 of 3,000 requests in 10 s).
+  - With `limits_for_local_addresses=1` and `trusted_addresses=127.0.0.1`, from
+    127.0.0.1: 16 of 16, 40 of 40, 11 of 11 and 10 of 10. (With that first setting and
+    no list the extended test fails from step 30 on, as section 25 says: 8 of 40 steps
+    here.) `--mode limits` from 127.0.0.1 shows the limits per address gone: 512 of
+    1,500 silent connections held until the first-message time-out, 60 of 60 accounts,
+    3,000 of 3,000 requests answered in 10 s, and 120 logins taken at once, of which 23
+    were answered after 20 s while a newcomer got no answer within 10 s; slow-frame,
+    which is not a limit per address, passes. The same mode from the machine's LAN
+    address, which is not on the list (the fuzzer's sockets bound to that address by a
+    wrapper), passes 5 of 5: 16 connections, 46 logins in 20 s, 19 accounts, 552
+    requests.
+  - The same two settings on a build with the address and undefined-behaviour
+    sanitizers: 16 of 16, 40 of 40 and nine of the ten abuse checks, no report. The
+    tenth, relogin (3,000 logins), was stopped by hand: under the sanitizers on that
+    busy machine it had not finished after ten minutes.
+  - A list holding a name, a range, 0.0.0.0, 300.1.1.1 and one address twice: the four
+    are refused in the log, the address is listed once.
+  - After the last edit (an include) the tree was built again and 16 of 16 and 40 of 40
+    were run once more, with the list empty and with 127.0.0.1 on it, together with the
+    accounts and budget checks from both addresses.
+  - Not compiled on Linux, with GCC or with MSVC. No new source file; `<algorithm>`,
+    `<cstddef>` and `<vector>` are the only new includes.
+
 ## Changes to the test client
 
 - It can be started as documented again: Python 3.13+ `argparse` imports the standard

@@ -68,7 +68,7 @@ public:
 	uint64_t frames_received = 0;
 
 	// Address as a number (host byte order), and whether the limits per address
-	// leave it alone (configuration.hpp, limits_for_local_addresses).
+	// leave it alone (configuration.hpp, limits_for_local_addresses and trusted_addresses).
 	uint32_t address_key = 0;
 	bool limits_exempt = false;
 

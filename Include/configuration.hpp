@@ -1,9 +1,11 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include <fstream>
 #include <string>
+#include <vector>
 
 class Config
 {
@@ -52,6 +54,19 @@ public:
 	// left alone unless this is set: a test rig there floods on purpose. Set it when
 	// strangers reach the server through something that gives them such an address.
 	static inline bool limits_for_local_addresses;
+
+	// Addresses the limits per address leave alone as well, whatever the setting above
+	// says (IPv4, host byte order; in the file: dotted, separated by commas or spaces,
+	// 16 at most, no ranges). For a relay that speaks for many players and reaches the
+	// server from one address that is not a private one, such as the server's own
+	// public address. Everything that connects from such an address shares no limit at
+	// all, so whatever stands there has to do the limiting itself (SECURITY.md). Empty
+	// unless set.
+	static constexpr size_t MAX_TRUSTED_ADDRESSES = 16;
+	static inline std::vector< uint32_t > trusted_addresses;
+
+	// Do the limits per address leave a client at this address alone?
+	static bool ExemptFromAddressLimits( const std::string &ip, uint32_t addressKey );
 
 	// The database file is not allowed to grow beyond this many megabytes.
 	static inline int32_t max_database_mb;

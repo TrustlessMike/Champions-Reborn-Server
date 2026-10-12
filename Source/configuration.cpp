@@ -1,8 +1,10 @@
 #include "configuration.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "Platform.hpp"
 
@@ -44,6 +46,51 @@ static bool ReadSwitch( const std::string &value )
 	return value == "1" || value == "true" || value == "on" || value == "yes";
 }
 
+// A list of IPv4 addresses, dotted, separated by commas, spaces or tabs. An entry that
+// is not an address is left out and said so: a name, a range ("10.0.0.0/8") or a typing
+// mistake must not quietly turn into trust for something else. Nor is 0.0.0.0 taken,
+// which would read as "everybody" and is the address of nobody.
+static void ReadAddressList( const std::string &key, const std::string &value, size_t most, std::vector< uint32_t > &out )
+{
+	out.clear();
+
+	size_t pos = 0;
+
+	while( pos < value.size() )
+	{
+		const size_t end = value.find_first_of( ", \t", pos );
+		const std::string entry = value.substr( pos, end == std::string::npos ? std::string::npos : end - pos );
+
+		pos = end == std::string::npos ? value.size() : end + 1;
+
+		if( entry.empty() )
+		{
+			continue;
+		}
+
+		uint32_t address = 0;
+
+		if( !Util::IPv4ToNumber( entry, address ) || address == 0 )
+		{
+			Log::Error( "config: {}: [{}] is not an IPv4 address (four numbers with dots, no names, no ranges); left out", key, entry );
+			continue;
+		}
+
+		if( std::find( out.begin(), out.end(), address ) != out.end() )
+		{
+			continue;
+		}
+
+		if( out.size() >= most )
+		{
+			Log::Error( "config: {}: more than {} addresses; [{}] left out", key, most, entry );
+			continue;
+		}
+
+		out.push_back( address );
+	}
+}
+
 bool Config::Load( std::string filename )
 {
 	service_ip = "0.0.0.0";
@@ -61,6 +108,7 @@ bool Config::Load( std::string filename )
 	requests_per_second = 50;
 	request_burst = 400;
 	limits_for_local_addresses = false;
+	trusted_addresses.clear();
 	max_database_mb = 1024;
 
 	// Read configuration from ini file
@@ -154,6 +202,10 @@ bool Config::Load( std::string filename )
 		{
 			limits_for_local_addresses = ReadSwitch( value );
 		}
+		else if( key == "trusted_addresses" )
+		{
+			ReadAddressList( key, value, MAX_TRUSTED_ADDRESSES, trusted_addresses );
+		}
 		else if( key == "max_database_mb" )
 		{
 			ReadNumber( key, value, 16, 1000000, max_database_mb );
@@ -196,7 +248,26 @@ bool Config::Load( std::string filename )
 		report_public_ip_for_lan_consoles = false;
 	}
 
+	// Said at every start, so that nobody forgets what the setting gives away.
+	for( const uint32_t address : trusted_addresses )
+	{
+		Log::Warn( "trusted_addresses: connections from {}.{}.{}.{} are not limited per address at all. "
+				   "Whatever connects from there has to limit its own users (SECURITY.md).",
+				   ( address >> 24 ) & 0xFF, ( address >> 16 ) & 0xFF, ( address >> 8 ) & 0xFF, address & 0xFF );
+	}
+
 	return true;
+}
+
+bool Config::ExemptFromAddressLimits( const std::string &ip, uint32_t addressKey )
+{
+	// Named in trusted_addresses: exempt whatever limits_for_local_addresses says.
+	if( std::find( trusted_addresses.begin(), trusted_addresses.end(), addressKey ) != trusted_addresses.end() )
+	{
+		return true;
+	}
+
+	return !limits_for_local_addresses && Util::IsPrivateOrLoopbackIPv4( ip );
 }
 
 std::string Config::ReportedAddress( const std::string &observedIp, const std::string &recipientIp )

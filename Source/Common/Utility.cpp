@@ -135,6 +135,19 @@ bool Util::IsPublicIPv4( const std::string &ip )
 		&& o[ 0 ] < 224;								// multicast and reserved
 }
 
+bool Util::IPv4ToNumber( const std::string &ip, uint32_t &out )
+{
+	uint8_t o[ 4 ];
+	if( !ParseIPv4( ip, o ) )
+	{
+		return false;
+	}
+
+	out = ( static_cast< uint32_t >( o[ 0 ] ) << 24 ) | ( static_cast< uint32_t >( o[ 1 ] ) << 16 )
+		| ( static_cast< uint32_t >( o[ 2 ] ) << 8 ) | static_cast< uint32_t >( o[ 3 ] );
+	return true;
+}
+
 static void AppendUTF8( std::string &out, uint32_t cp )
 {
 	if( cp < 0x80 )

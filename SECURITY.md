@@ -40,6 +40,7 @@ Settings (config.ini; the value shown is the default):
 | `requests_per_second`, `request_burst` | 50, 400 | the budget of one address: a request costs 1 unit, a chat line 2, a game or room opened or a friend-list change 5, a login or a character download 10, an account created 20, a character written 30 more. An address that has used its budget is not read until there is budget again: its requests wait, nothing is refused. |
 | `max_database_mb` | 1024 | size of the database file |
 | `limits_for_local_addresses` | 0 | the limits per address are for strangers: unless this is 1 they leave alone the addresses only the server's own machine and network can have (127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) |
+| `trusted_addresses` | empty | addresses the limits per address leave alone as well, whatever `limits_for_local_addresses` says: up to 16 IPv4 addresses with dots, separated by commas or spaces; no names, no ranges (an entry that is not an address is left out, with an error in the log). **Everything that connects from such an address shares no limit at all**: read "A relay that speaks for many players" below before setting it |
 
 Fixed in the code: 40 password checks per address at once and one more every 3 seconds
 (logins and account-detail requests, right or wrong); 20 accounts created per address
@@ -66,6 +67,74 @@ Two things to check when the server is set up:
   thousand messages and logs in dozens of times within a minute. From 127.0.0.1 or from
   the server's own network it runs as before; from an address the limits apply to, its
   steps 30 and after are slowed until they fail, which is the limits working.
+
+## A relay that speaks for many players (`trusted_addresses`)
+
+Players of the browser build do not connect to this server themselves. A relay
+(`tools/play-web/relay/relay.py` in the reverse-engineering repository) holds their
+connections, and the server sees every one of them at the relay's address. A relay that
+reaches the server from a loop-back or private address is left alone by the limits per
+address, as every local address is. A relay that runs on the server's own machine and
+connects to the server's *public* address also comes from that public address, and is
+then one stranger: 16 connections, one request budget, one allowance of password checks,
+and 20 new accounts and one more every three minutes, for all its players together.
+
+`trusted_addresses=` names addresses that the limits per address leave alone exactly as
+they leave local addresses alone: connections per address, the request budget, password
+checks, accounts created. A listed address is exempt whatever
+`limits_for_local_addresses` says. The list is empty unless set, and the server names
+every listed address in a warning each time it starts.
+
+It changes nothing else. The limits that are not per address hold for a listed address
+too: connections in all, the time-outs, the size of a frame, unread replies, one game
+and one room per session, the size of the database, the log.
+
+**What it gives away.** The server cannot tell the people behind a listed address apart,
+so it has nothing left to limit them by: everybody who can make a connection come from
+that address shares no limit at all. One of them can hold every connection the server
+has, create accounts until the database is at `max_database_mb`, try passwords as fast
+as the server checks them, and, since one thread serves everybody, keep all other
+players waiting meanwhile. Sections 24 and 25 of FIXES.md do not exist for that address.
+Tried (FIXES.md section 31), `tools/lobby_fuzz.py --mode limits` against one instance
+with `limits_for_local_addresses=1` and one address listed:
+
+| check | from the listed address | from an address not listed |
+| --- | --- | --- |
+| 1,500 silent connections | 512 held (all the server has) until the first-message time-out | 16 held |
+| 120 wrong passwords at once | all taken at once: 23 answered after 20 s on a busy machine, and a newcomer got no answer within 10 s | 46 answered in 20 s, a newcomer in 0.03 s |
+| 60 accounts in a row | 60 created | 19 created |
+| 3,000 requests at once | 3,000 answered in 10 s | 552 answered in 10 s, the rest left waiting |
+
+So, before an address goes on the list:
+
+- **Nothing but the relay may be able to connect from it.** Every program and every
+  user of that machine can. So can everybody whose traffic leaves through that address:
+  never list the address of a router, a gateway, a proxy or a VPN that other people come
+  through.
+- **The relay has to limit its own players, each by their own address.** What
+  `relay.py` did when this was written (2026-10-12), against what the server stops
+  doing for it:
+
+  | the server's limit per address | what the relay does per player |
+  | --- | --- |
+  | 16 connections | **covered**: 64 sessions in all (`--max-sessions`), 4 from one player address (`--per-address`), 4 connections to this server per session: 256 connections here at most, 16 for one player address. The player's address is the one the web server in front hands on (`--trust-proxy`, `X-Real-IP`); without that option every player counts as one address and the relay takes 4 sessions in all |
+  | request budget: 50 units a second, 400 at once | **not covered**: 600 messages and 262,144 bytes a second per session, which is sized for a game's datagrams. One message may carry many requests, and that many bytes are some 2,900 logins a second |
+  | password checks: 40, then one every 3 s | **not covered**: the relay does not look at what a page sends to this server |
+  | accounts: 20, then one every 3 minutes | **not covered**, for the same reason |
+
+  That is not enough. With the relay's address listed and the relay as it is, one page
+  can do to the server what the first table shows, and the password of any account can
+  be tried through it without a brake. The relay can keep the three limits
+  itself without reading anything secret: the length of a request (four bytes,
+  big-endian, counting themselves) and its message id (the two bytes after, little-endian)
+  are not encrypted; 0x06 creates an account, 0x16 and 0x64 check a password, and
+  `LobbyServer::RequestCost` has what each request costs. The allowances have to be kept
+  per player address and outlive a session, or a page gets new ones by connecting again.
+- **Leaving the list empty loses nothing but room.** All the relay's players together
+  then have what one address has: 16 connections (a game holds one or two), and 20 new
+  accounts and one more every three minutes. `max_connections_per_address`,
+  `requests_per_second` and `request_burst` can be raised, for every address alike; the
+  allowances for password checks and accounts are fixed in the code.
 
 ## What is not protected, and cannot be from here
 

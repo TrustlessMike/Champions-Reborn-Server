@@ -573,7 +573,7 @@ void LobbyServer::AcceptConnection( sptr_socket srcSocket )
 
 	const std::string remoteIp = Util::IPFromAddr( clientInfo );
 	const uint32_t addressKey = ntohl( clientInfo.sin_addr.s_addr );
-	const bool exempt = !Config::limits_for_local_addresses && Util::IsPrivateOrLoopbackIPv4( remoteIp );
+	const bool exempt = Config::ExemptFromAddressLimits( remoteIp, addressKey );
 
 	// One address may hold only so many connections.
 	if( !exempt )
