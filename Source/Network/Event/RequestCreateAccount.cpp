@@ -5,6 +5,7 @@
 #include "Common/Constant.hpp"
 #include "Crypto/PasswordHash.hpp"
 #include "Database/Database.hpp"
+#include "Lobby Server/LobbyServer.hpp"
 #include "logging.hpp"
 
 void RequestCreateAccount::Deserialize( sptr_byte_stream stream )
@@ -20,21 +21,28 @@ void RequestCreateAccount::Deserialize( sptr_byte_stream stream )
 
 bool RequestCreateAccount::VerifyUserData()
 {
-	if( m_username.empty() || m_password.empty() || m_emailAddress.empty() || m_dateOfBirth.empty() || m_chatHandle.empty() )
+	const auto plain = []( const std::wstring &text, size_t longest )
 	{
-		Log::Error( "RequestCreateAccount::VerifyUserData() - Missing required fields for account creation." );
-		return false;
-	}
+		if( text.empty() || text.length() > longest )
+		{
+			return false;
+		}
 
-	if( m_username.length() < 3 || m_username.length() > 20 )
-	{
-		Log::Error( "RequestCreateAccount::VerifyUserData() - Username must be between 3 and 20 characters." );
-		return false;
-	}
+		for( const wchar_t ch : text )
+		{
+			if( ch < 0x20 || ch == 0x7F )
+			{
+				return false;
+			}
+		}
 
-	if( m_password.length() < 6 || m_password.length() > 32 )
+		return true;
+	};
+
+	if( !plain( m_username, 32 ) || !plain( m_password, 64 ) || !plain( m_emailAddress, 128 )
+		|| !plain( m_dateOfBirth, 32 ) || !plain( m_chatHandle, 15 ) )
 	{
-		Log::Error( "RequestCreateAccount::VerifyUserData() - Password must be between 6 and 32 characters." );
+		Log::Error( "RequestCreateAccount::VerifyUserData() - A field is empty, too long or holds control characters." );
 		return false;
 	}
 
@@ -66,6 +74,20 @@ sptr_generic_response RequestCreateAccount::ProcessRequest( sptr_socket socket, 
 		return std::make_shared< ResultCreateAccount >( this, ERROR_FATAL, L"" );
 	}
 
+	// Nothing the game's own screens produce is refused here: these are the sizes of
+	// database fields nobody may fill at will, and characters no keyboard has. (A zero
+	// in a name used to end the name in the database but not in the server's memory.)
+	if( !VerifyUserData() )
+	{
+		return std::make_shared< ResultCreateAccount >( this, ERROR_FATAL, L"" );
+	}
+
+	if( !LobbyServer::Get().AllowAccountCreation( socket ) )
+	{
+		Log::Error( "RequestCreateAccount::ProcessRequest() - Too many accounts created from {}, refused.", socket->remote_ip );
+		return std::make_shared< ResultCreateAccount >( this, ERROR_FATAL, L"" );
+	}
+
 	auto result = Database::Get().CreateNewAccount
 	(
 		Util::WideToUTF8( m_username ),
@@ -79,6 +101,13 @@ sptr_generic_response RequestCreateAccount::ProcessRequest( sptr_socket socket, 
 	{
 		Log::Error( "RequestCreateAccount::ProcessRequest() - Failed to create account for user: {}", m_username );
 		return std::make_shared< ResultCreateAccount >( this, ERROR_FATAL, L"" );
+	}
+
+	// The connection is logged in as the new account from here on; a session it had
+	// before is over.
+	if( user->m_isLoggedIn )
+	{
+		UserManager::Get().EndSession( user );
 	}
 
 	user->m_isLoggedIn = true;

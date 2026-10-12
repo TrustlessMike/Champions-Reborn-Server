@@ -77,7 +77,7 @@ sptr_generic_response RequestCreatePublicGame_RTA::ProcessRequest( sptr_socket s
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		Log::Error( "User not found! [{}]", m_sessionId );
@@ -89,6 +89,12 @@ sptr_generic_response RequestCreatePublicGame_RTA::ProcessRequest( sptr_socket s
 	{
 		Log::Error( "RequestCreatePublicGame::ProcessRequest() - Failed to create public game session!" );
 		return std::make_shared< ResultCreatePublicGame_RTA >( this, GENERAL_ERROR, "", 0 );
+	}
+
+	// An address is at most 15 characters; whatever else arrives is not passed on in full.
+	if( m_localAddr.size() > 64 )
+	{
+		m_localAddr.resize( 64 );
 	}
 
 	user->m_localAddr = m_localAddr;

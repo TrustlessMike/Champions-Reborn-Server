@@ -1,6 +1,10 @@
 #pragma once
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
 #include <string>
+#include <vector>
 #include <memory>
 #include <array>
 
@@ -48,14 +52,18 @@ public:
 	bool			m_isLoggedIn;		// True if the user has successfully authenticated and logged in
 	bool			m_isHost;			// True if this user is the host of a realm
 	int32_t			m_gameId;			// Unique ID of the realm
+	int32_t			m_partyGameId;		// The game it last opened or became a member of, or -1.
+										// Says whose characters it may save (0x5E), and outlives
+										// the game's place in the list and a lost connection.
 
 	int32_t			m_publicRoomId;		// Used for public chat rooms
 	int32_t			m_privateRoomId;	// Used for private chat rooms
 
 	std::string		m_localAddr;		// Local IP address of the user, passed from the client during Realm creation.
-	int32_t			m_localPort;
+	int32_t			m_localPort = 0;	// Was left as it lay in memory, and is sent to other consoles (0x65)
 	std::string		m_discoveryAddr;
 	int32_t			m_discoveryPort;
+	std::chrono::steady_clock::time_point m_lastDiscovery{};	// When its last discovery datagram was taken
 
 	int32_t 		m_characterId;
 	sptr_realm_character m_character;	

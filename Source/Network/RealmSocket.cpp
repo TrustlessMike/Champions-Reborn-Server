@@ -1,4 +1,6 @@
 #include "Network/RealmSocket.hpp"
+
+#include <cstring>
 #include "Common/Utility.hpp"
 
 RealmSocket::RealmSocket()

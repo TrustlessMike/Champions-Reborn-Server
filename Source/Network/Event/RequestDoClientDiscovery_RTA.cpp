@@ -19,7 +19,7 @@ sptr_generic_response RequestDoClientDiscovery_RTA::ProcessRequest( sptr_socket 
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		Log::Error( "User not found! [{}]", m_sessionId );
@@ -33,8 +33,17 @@ sptr_generic_response RequestDoClientDiscovery_RTA::ProcessRequest( sptr_socket 
 		return std::make_shared< ResultDoClientDiscovery_RTA >( this, NOT_FOUND );
 	}
 
+	// Turning to this game means leaving any other: a game of its own is closed, a
+	// place in somebody else's given back.
+	GameSessionManager::Get().LeaveGames( user, session->m_gameId );
+
 	user->m_isHost = false;
 	user->m_gameId = session->m_gameId;
+	if( m_localAddr.size() > 64 )
+	{
+		m_localAddr.resize( 64 );
+	}
+
 	user->m_localAddr = Util::WideToUTF8(m_localAddr);
 	user->m_localPort = m_localPort;
 

@@ -11,6 +11,7 @@ CharacterSaveTask::CharacterSaveTask( CharacterSaveType Type, uint32_t character
 	m_targetUser.reset();
 
 	m_characterId = characterId;
+	m_targetAccountId = -1;
 	m_writePosition = 0;
 	m_requestPacketId = 0;
 	m_requestTrackId = 0;

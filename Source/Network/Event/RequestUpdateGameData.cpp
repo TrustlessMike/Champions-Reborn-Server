@@ -52,7 +52,7 @@ sptr_generic_response RequestUpdateGameData::ProcessRequest( sptr_socket socket,
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 
 	if( user == nullptr )
 	{
@@ -61,6 +61,14 @@ sptr_generic_response RequestUpdateGameData::ProcessRequest( sptr_socket socket,
 	}
 
 	auto gameSession = GameSessionManager::Get().FindGame( user->m_gameId, user->m_gameType );
+
+	// Only the host. A console that had merely asked about the game (0x0D, 0x25)
+	// points at it too, and could replace what the list says about it.
+	if( gameSession != nullptr && gameSession->GetOwner() != user )
+	{
+		Log::Error( "User [{}] sent data for game session [{}] without owning it", user->m_username, user->m_gameId );
+		return std::make_shared< ResultUpdateGameData >( this );
+	}
 
 	if( !ParseGameData( gameSession ) )
 	{

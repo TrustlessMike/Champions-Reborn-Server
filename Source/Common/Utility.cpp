@@ -5,34 +5,41 @@
 
 #include "Common/Utility.hpp"
 
+// Both work in 64 bits: with abs() and int32_t arithmetic the smallest and the largest
+// values overflowed, and these numbers can come out of a message.
 int32_t Util::round_up( int32_t numToRound, int32_t multiple )
 {
-	if( multiple == 0 )
+	if( multiple <= 0 )
 		return numToRound;
 
-	int32_t remainder = abs( numToRound ) % multiple;
+	const int64_t value = numToRound;
+	const int64_t magnitude = value < 0 ? -value : value;
+	const int64_t remainder = magnitude % multiple;
+
 	if( remainder == 0 )
 		return numToRound;
 
-	if( numToRound < 0 )
-		return -( abs( numToRound ) - remainder );
-	else
-		return numToRound + multiple - remainder;
+	const int64_t rounded = value < 0 ? -( magnitude - remainder ) : value + multiple - remainder;
+
+	// Out of range only for the top few values; there is no multiple to round up to.
+	return rounded > INT32_MAX ? numToRound : static_cast< int32_t >( rounded );
 }
 
 int32_t Util::round_down( int32_t numToRound, int32_t multiple )
 {
-	if( multiple == 0 )
+	if( multiple <= 0 )
 		return numToRound;
 
-	int32_t remainder = abs( numToRound ) % multiple;
+	const int64_t value = numToRound;
+	const int64_t magnitude = value < 0 ? -value : value;
+	const int64_t remainder = magnitude % multiple;
+
 	if( remainder == 0 )
 		return numToRound;
 
-	if( numToRound < 0 )
-		return -( abs( numToRound ) + remainder );
-	else
-		return numToRound - remainder;
+	const int64_t rounded = value < 0 ? -( magnitude + remainder ) : value - remainder;
+
+	return rounded < INT32_MIN ? numToRound : static_cast< int32_t >( rounded );
 }
 
 uint16_t Util::ByteSwap( uint16_t val )

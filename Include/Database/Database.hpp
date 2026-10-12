@@ -5,7 +5,10 @@
 #include <string>
 #include <tuple>
 #include <chrono>
+#include <cstdint>
 #include <map>
+#include <unordered_map>
+#include <vector>
 
 #include <sqlite3.h>
 #include "Transaction.hpp"
@@ -15,6 +18,7 @@
 enum class QueryID {
 	CreateAccount,
 	VerifyAccount,
+	UpdatePassword,
 	LoadAccount,
 
 	LoadCharacterSlots,
@@ -63,6 +67,7 @@ public:
 							  const std::string &chat_handle );
 
 	std::tuple< bool, int64_t, std::wstring > VerifyAccount( const std::wstring &username, const std::wstring &password );
+	bool UpdatePassword( const int64_t account_id, const std::string &hashedPassword );
 
 	// Found, e-mail address, date of birth.
 	std::tuple< bool, std::wstring, std::wstring > LoadAccount( const int64_t account_id );
@@ -91,6 +96,7 @@ public:
 
 private:
 	void CreateTables();
+	void LimitSize();
 	void PrepareStatements();
 	void FinalizeStatements();
 	void Execute( const char *sql );

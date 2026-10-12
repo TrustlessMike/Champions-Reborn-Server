@@ -47,6 +47,15 @@ public:
 
 	sptr_user FindUserBySessionId( const std::wstring &sessionId );
 	sptr_user FindUserBySocket( const sptr_socket &socket );
+
+	// The user of this connection if it has logged in, otherwise nothing. What a
+	// request handler asks: a connection that has not logged in is to it what a
+	// connection without a user is.
+	sptr_user FindLoggedInUser( const sptr_socket &socket );
+
+	// Ends what the user's session holds (games, chat rooms, an upload, its friends'
+	// view of it) and leaves the user as it was before it logged in.
+	void EndSession( const sptr_user &user );
 	sptr_user FindUserByChatHandle( const std::wstring &handle );
 	int32_t GetUserCount() const;
 	std::vector< sptr_user > GetUserList();
@@ -67,11 +76,12 @@ private:
 		int32_t			m_characterId;		// The character a save would go to
 		sptr_realm_character m_character;
 		int32_t			m_publicRoomId;		// The public chat room it was in, or -1
+		int32_t			m_partyGameId;		// The game it last opened or joined, or -1
 		std::chrono::steady_clock::time_point m_lostAt;
 	};
 
 	std::mutex m_mutex;
 	std::vector< sptr_user > m_users;
 	std::vector< LostSession > m_lostSessions;
-	std::mt19937 rng;
+	std::random_device m_randomDevice;
 };

@@ -16,7 +16,7 @@ sptr_generic_response RequestAddIgnore::ProcessRequest( sptr_socket socket, sptr
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		return std::make_shared< ResultAddIgnore >( this, FATAL_ERROR );
@@ -30,6 +30,12 @@ sptr_generic_response RequestAddIgnore::ProcessRequest( sptr_socket socket, sptr
 	if( user->IsIgnored( m_chatHandle ) )
 	{
 		return std::make_shared< ResultAddIgnore >( this, IGNORE_DUPLICATE );
+	}
+
+	// A list is sent whole with every 0x61, and nobody has this many friends or foes.
+	if( user->m_ignoreList.size() >= 100 )
+	{
+		return std::make_shared< ResultAddIgnore >( this, DATABASE_ERROR );
 	}
 
 	auto targetUser = UserManager::Get().FindUserByChatHandle( m_chatHandle );

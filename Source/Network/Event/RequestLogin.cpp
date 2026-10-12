@@ -26,6 +26,12 @@ sptr_generic_response RequestLogin::ProcessLoginCON( sptr_user user )
 		return std::make_shared< ResultLogin >( this, LOGIN_REPLY::ACCOUNT_INVALID, L"" );
 	}
 
+	// A connection that logs in a second time starts afresh.
+	if( user->m_isLoggedIn )
+	{
+		UserManager::Get().EndSession( user );
+	}
+
 	user->m_isLoggedIn = true;
 	user->m_accountId = -1;
 	user->m_sessionId = UserManager::Get().GenerateSessionId();
@@ -72,6 +78,13 @@ sptr_generic_response RequestLogin::ProcessLoginRTA( sptr_user user )
 	// The same goes for a session whose connection was lost a moment ago and which
 	// is waiting to be picked up again: this login replaces it.
 	UserManager.ForgetLostSessions( accountId );
+
+	// A connection that is logged in and logs in again starts afresh: the game, the
+	// chat rooms and the unfinished upload of the session it had are given up.
+	if( user->m_isLoggedIn )
+	{
+		UserManager.EndSession( user );
+	}
 
 	// Login Success
 	user->m_isLoggedIn = true;

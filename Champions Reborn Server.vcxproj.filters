@@ -296,6 +296,9 @@
     <ClInclude Include="Include\Common\RLEZ.hpp">
       <Filter>Header Files\Crypto</Filter>
     </ClInclude>
+    <ClInclude Include="Include\Common\RateLimit.hpp">
+      <Filter>Header Files\Crypto</Filter>
+    </ClInclude>
     <ClInclude Include="Include\Common\Constant.hpp">
       <Filter>Header Files\Common</Filter>
     </ClInclude>

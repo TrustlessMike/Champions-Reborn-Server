@@ -14,7 +14,7 @@ sptr_generic_response RequestCancelGame::ProcessRequest( sptr_socket socket, spt
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		Log::Error( "User not found! [{}]", m_sessionId );

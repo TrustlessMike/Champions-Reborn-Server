@@ -1,6 +1,8 @@
 #include "logging.hpp"
 
+#include <chrono>
 #include <cstdio>
+#include <string>
 #include <ctime>
 #include <filesystem>
 
@@ -101,18 +103,70 @@ void Log::CheckFileStatus( LOG_TYPE type )
 	}
 }
 
-void Log::WriteToLog( LOG_TYPE type, const std::string &message )
+// What clients send ends up in log lines: names, room names, chat handles. A line
+// break in one would start a line of the sender's own making, an escape sequence would
+// reach the terminal of whoever reads the log, and a long one would fill the disk
+// faster. So: printable characters only, and no line longer than this.
+static std::string Presentable( const std::string &message )
+{
+	constexpr size_t LONGEST = 600;
+
+	std::string out;
+	out.reserve( message.size() < LONGEST ? message.size() : LONGEST );
+
+	for( const char ch : message )
+	{
+		if( out.size() >= LONGEST )
+		{
+			out += " ...";
+			break;
+		}
+
+		const unsigned char byte = static_cast< unsigned char >( ch );
+		out.push_back( ( byte < 0x20 || byte == 0x7F ) ? '?' : ch );
+	}
+
+	return out;
+}
+
+void Log::WriteToLog( LOG_TYPE type, const std::string &rawMessage )
 {
 	std::lock_guard lock( log_lock );
 
-	SetConsoleColor( type + 10 );
+	// Lines per second, for each kind of line: a client can make the server write
+	// one for every message it sends, and nothing else bounds the size of the log.
+	// What is left out is counted and said once there is room again.
+	{
+		const auto now = std::chrono::steady_clock::now();
+		auto &budget = line_budget[ type ];
 
+		budget.Refill( now, LINES_PER_SECOND, LINES_AT_ONCE );
+
+		if( !budget.Has( 1.0 ) )
+		{
+			suppressed_lines[ type ]++;
+			return;
+		}
+
+		budget.Take( 1.0 );
+	}
+
+	std::string message = Presentable( rawMessage );
+
+	if( suppressed_lines[ type ] > 0 )
+	{
+		message = "(" + std::to_string( suppressed_lines[ type ] ) + " lines of this kind were left out) " + message;
+		suppressed_lines[ type ] = 0;
+	}
+
+	SetConsoleColor( type + 10 );
 	switch( type )
 	{
 		case log_generic: printf( "[INFO]: " ); break;
 		case log_debug:   printf( "[DEBUG]: " ); break;
 		case log_warn:    printf( "[WARN]: " ); break;
 		case log_error:   printf( "[ERROR]: " ); break;
+		default: break;
 	}
 
 	SetConsoleColor( 15 );
@@ -120,6 +174,7 @@ void Log::WriteToLog( LOG_TYPE type, const std::string &message )
 	fflush( stdout );
 
 	CheckFileStatus( type );
+
 	file_stream[ type ] << GetTimeStamp() << message << '\n';
 	file_stream[ type ].flush();
 }

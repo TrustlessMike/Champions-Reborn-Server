@@ -12,6 +12,7 @@
 #include "Game/RealmUser.hpp"
 #include "Game/RealmUserManager.hpp"
 #include "Database/Database.hpp"
+#include "Lobby Server/LobbyServer.hpp"
 #include "logging.hpp"
 
 CharacterSaveManager::CharacterSaveManager()
@@ -50,6 +51,13 @@ bool CharacterSaveManager::BeginSaveTask(
 
 	const auto &sessionId = m_owner->m_sessionId;
 
+	// Only a logged-in session uploads, and only to an account.
+	if( sessionId.empty() || m_target->m_accountId <= 0 )
+	{
+		Log::Error( "CreateSaveTask called without a session or an account!" );
+		return false;
+	}
+
 	if( m_tasks.find( sessionId ) != m_tasks.end() )
 	{
 		m_tasks.erase( sessionId );
@@ -59,6 +67,7 @@ bool CharacterSaveManager::BeginSaveTask(
 
 	task->m_ownerUser = m_owner;
 	task->m_targetUser = m_target;
+	task->m_targetAccountId = m_target->m_accountId;
 	task->m_meta = metaData;
 	task->m_requestPacketId = requestPacketId;
 	task->m_requestTrackId = requestTrackId;
@@ -143,26 +152,39 @@ bool CharacterSaveManager::CommitSaveTask( const std::wstring &sessionId )
 			return false;
 		}
 
+		// The account is the one the upload was begun for. The user may have gone
+		// since (its connection lost while another console saved its character), or
+		// logged in as somebody else.
+		const int64_t accountId = saveTask->m_targetAccountId;
+
+		// The database write is the expensive part of an upload.
+		LobbyServer::Get().AddRequestCost( 30 );
+
 		if( saveTask->m_saveType == CharacterSaveType::NEW_CHARACTER )
 		{
 			// The game itself stops offering "new character" at this number, and its
 			// character list overruns at 50; nothing else may get an account there.
-			if( Database::Get().LoadCharacterSlots( targetUser->m_accountId ).size() >= MAX_NUMBER_OF_CHARACTERS )
+			if( Database::Get().LoadCharacterSlots( accountId ).size() >= MAX_NUMBER_OF_CHARACTERS )
 			{
-				Log::Error( "CommitSaveTask: Account ID {} already has {} characters", targetUser->m_accountId, MAX_NUMBER_OF_CHARACTERS );
+				Log::Error( "CommitSaveTask: Account ID {} already has {} characters", accountId, MAX_NUMBER_OF_CHARACTERS );
 				return false;
 			}
 
-			auto result = Database::Get().CreateNewCharacter( targetUser->m_accountId, saveTask->m_meta, saveTask->m_data );
+			auto result = Database::Get().CreateNewCharacter( accountId, saveTask->m_meta, saveTask->m_data );
 			if( !result )
 			{
-				Log::Error( "CommitSaveTask: Failed to create new character for account ID: {}", targetUser->m_accountId );
+				Log::Error( "CommitSaveTask: Failed to create new character for account ID: {}", accountId );
 				return false;
 			}
 
-			Log::Debug( "CommitSaveTask: New character created with ID {} for account ID: {}", result, targetUser->m_accountId );
+			Log::Debug( "CommitSaveTask: New character created with ID {} for account ID: {}", result, accountId );
 
-			targetUser->m_characterId = result;
+			// The user may have become somebody else's since (EndSession sets -1).
+			if( targetUser->m_isLoggedIn )
+			{
+				targetUser->m_characterId = result;
+			}
+
 			saveTask->m_characterId = result;
 		}
 		else
@@ -173,14 +195,14 @@ bool CharacterSaveManager::CommitSaveTask( const std::wstring &sessionId )
 				return false;
 			}
 
-			auto result = Database::Get().SaveCharacter( targetUser->m_accountId, targetUser->m_characterId, saveTask->m_meta, saveTask->m_data );
+			auto result = Database::Get().SaveCharacter( accountId, static_cast< int32_t >( saveTask->m_characterId ), saveTask->m_meta, saveTask->m_data );
 			if( !result )
 			{
-				Log::Error( "CommitSaveTask: Failed to save character for account ID: {}", targetUser->m_accountId );
+				Log::Error( "CommitSaveTask: Failed to save character for account ID: {}", accountId );
 				return false;
 			}
 
-			Log::Debug( "CommitSaveTask: Character saved for account ID: {}", targetUser->m_accountId );
+			Log::Debug( "CommitSaveTask: Character saved for account ID: {}", accountId );
 		}
 	}
 	catch( const std::exception &e )

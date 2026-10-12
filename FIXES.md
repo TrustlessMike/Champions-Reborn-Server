@@ -22,6 +22,9 @@ How to read this file:
   runs 40: seven steps were added behind the others, and the first 33 kept their
   numbers.)
 - D1 to D10 are the defect numbers of `docs/lobby-protocol.md` section 10.
+- Sections 21 to 30 are of another kind: what a stranger could do to a server that is
+  reachable from the internet, each with its severity and its reproducer. What is and
+  is not protected after them is in `SECURITY.md`.
 
 Build: `sh build.sh` in `server/upstream`. The Windows project files list the three new
 sources, and nothing POSIX-only was added outside `Include/Platform.hpp`, but **the Windows
@@ -557,6 +560,281 @@ of 40: step 40 fails. Against a build of the tree as it was before section 16 it
 The instances under test still had to be built with other gateway numbers in
 `LobbyServer::Start`; step 30 now goes where `--gateway-port` points.
 
+## 21 to 30. Hardening for a server that strangers can reach (2026-10-12)
+
+The server now stands on the public internet, and until here it had been made to work
+for friends. These sections are the result of reading every handler, the framing, the
+stream readers, the crypto wrapper and the database layer with one question: what can
+somebody do who is nobody's friend. How it was checked is at the end ("The checks of 21
+to 30"); the reproducers are checks of the new `tools/lobby_fuzz.py`, named with each
+finding as `abuse: name` or `limits: name`. "Before" results are from a build of the
+tree as it was after section 20. Severity is how bad it is for the players of a public
+server: **high** harms them or stops the server for everybody, **medium** needs luck or
+harms little, **low** is wrong but was not reachable.
+
+What held: the stream readers of section 9. The unfixed tree, built with the address
+and undefined-behaviour sanitizers, took 300 fuzz sessions (105,053 messages: every
+message id on both games' ports with well-formed and mutated bodies, behind a real login
+and without, raw noise, discovery datagrams) without a report and without stopping. No
+handler reads past a message, and every SQL statement was already prepared with
+parameters. What follows was found by reading and then shown.
+
+## 21. Anybody could overwrite anybody's character (high)
+
+- A stranger could: log in with a throwaway account and send a character save (0x5E)
+  naming another player's session id. The server looked that session up among all
+  users and wrote the data over the character that player was playing. Being in a game
+  with the victim was not needed. `abuse: save` — before: answered 0, the victim's
+  character replaced; now: answered 1, character kept.
+- And the session id did not have to be learnt: ids came from `std::mt19937` seeded
+  once, at start, with one 32-bit number (`UserManager::UserManager`). Two ids of one's
+  own are enough to find the seed by trying all of them, and every id the server gives
+  out afterwards follows. (Shown by reading only; no search was run.)
+- Fixed:
+  - Source/Game/RealmUserManager.cpp, `GenerateSessionId`: 64 bits from
+    `std::random_device` for every id, checked against the ids in use.
+  - Source/Network/Event/RequestSaveCharacter_RTA.cpp: who asks is the connection's
+    user; the session id at the front of the request is no longer compared with
+    anything. The second id is looked up only among logged-in users, and the save is
+    refused unless both have opened or joined the same game: new field
+    `RealmUser::m_partyGameId`, set in `GameSession::AddMember` (so for the host when it
+    opens the game and for a joiner at its 0x5F), kept when the game leaves the list at
+    its start and when a lost session is picked up again (`LostSession`), cleared at
+    logout. That is the game's own rule (lobby-protocol.md 8.8): the consoles of a party
+    save each other's characters.
+  - `FindUserBySessionId` and `FindUserByChatHandle` only find logged-in users, and an
+    empty id or handle finds nobody (it used to find the first connection that had not
+    logged in).
+  - An upload remembers the account and the character it was begun for
+    (`CharacterSaveTask::m_targetAccountId`, Source/Game/CharacterSaveManager.cpp),
+    instead of reading them from the user object when the last piece arrives.
+- Left: a player who is in a game with you can still overwrite the character you are
+  playing. That is how the game saves; see SECURITY.md.
+
+## 22. A connection that had not logged in could use the lobby (high)
+
+- A stranger could, without an account: enter chat rooms, speak in them under no name
+  (the form the server's own "has joined" lines have), open games and game chat rooms,
+  ask for the Champions of Norrath game list with every host's address, and be the
+  target of messages addressed to the empty handle. `abuse: no-login`.
+- Fixed: `UserManager::FindLoggedInUser` (new) returns the connection's user only if it
+  has logged in. Every handler but those of the connect and login sequence (0x06, 0x0F,
+  0x16, 0x24, 0x27, 0x42, 0x43, 0x64), logout, the list of public rooms (0x0E, the
+  same for everybody) and the upload pieces (0x5D, which need an upload that only a
+  logged-in session can begin) uses it, and so gives a connection that has
+  not logged in the reply it already gave a connection without a user (the replies of
+  section 10, which the game can parse). 0x55 still answers 7, as section 16 needs.
+  Source/Network/Event/RequestMatchGame.cpp (0x18) had no user check at all and now
+  answers with an empty list.
+
+## 23. Memory without end: uploads, games, chat rooms (high)
+
+- A stranger with one account could make the server keep, for good:
+  - **an unfinished character upload per login.** Uploads are kept by session id, a
+    second login on the same connection gave a new id, and the old upload stayed with
+    its 37 KB. `abuse: relogin`, 3,000 logins on one connection: the process grew by
+    219 MB (sanitizer build; 54 MB in a release build). Now 0 MB.
+  - **a game per request.** Nothing tied a session to one game. `abuse: games`: 300
+    games opened by one session, 304 in everybody's list, and 303 still there after
+    the session had gone, each without a host. Asking about another game (0x57, 0x66,
+    0x0D, 0x25) after opening one had the same effect: the server forgot which game
+    was the user's. Now 1 listed, 0 after it left.
+  - **a chat room per request**, 2,000 of them in `abuse: rooms`, every one still
+    there afterwards and every one searched for each later room request.
+  - **a place in every room entered.** A user was taken out of the last public and
+    the last game room it had entered only; in the others its entry stayed for ever.
+- Fixed:
+  - Source/Game/RealmUserManager.cpp, `EndSession` (new): what `RemoveUser` did to a
+    session, without removing the user. `RequestLogin` and `RequestCreateAccount` call
+    it when the connection is already logged in, so a second login starts afresh.
+  - Source/Game/GameSessionManager.cpp: `LeaveGames` (new) takes a user out of every
+    game: games it owns are removed, places in others given back, games without an
+    owner removed. Called when a session ends, before it opens a game (one game per
+    session) and when it turns to another game. `MayCreateGame`: at most 256 games per
+    game type, names and info strings of at most 256 characters (what the game's list
+    takes).
+  - Source/Game/ChatRoomManager.cpp: `CreateGameChatSession` leaves the session's
+    earlier game room first, refuses a room without a name or with more than 256
+    characters, and stops at 256 game rooms; `OnDisconnectUser` goes through every
+    room. Source/Game/ChatRoom.cpp: members whose user no longer exists are dropped
+    (`DropExpiredMembers`), and a room holds 512 at most.
+  - Friends and ignored names: 100 each per account (RequestAddFriend.cpp,
+    RequestAddIgnore.cpp). The LAN address a console reports about itself is cut at 64
+    characters before it is passed on.
+
+## 24. One address could take every connection (high)
+
+- A stranger could: open connections until the server had none left. `limits:
+  connections`, before: of 1,500 silent connections 523 were held and 963 refused, which
+  is to say that the table was full and nobody else got in; they were held for
+  `client_timeout`, and for ever with one byte now and then (`limits: slow-frame`: a
+  frame sent a byte every 5 seconds was still being waited for after 150 s, because any
+  byte counted as a sign of life). A connection the server had decided to close waited
+  without limit for its last replies to be taken.
+- Fixed, Source/Lobby Server/LobbyServer.cpp and Include/Network/RealmSocket.hpp:
+  - `AcceptConnection`: `max_connections_per_address` (16) and `max_connections` (512,
+    and never more than `select()` can watch: `MaxSelectableSockets`, Platform.hpp).
+    At the second limit `MakeRoomForConnection` closes the connection that has not
+    logged in and has been silent the longest, so that whoever only holds connections
+    loses them to the next comer and logged-in players are not touched.
+  - `ProcessFrames` (split off `ReadSocket`): `last_recv_time` is set by a whole frame
+    only. `CheckSocketProblem`: a connection that has not sent one whole message
+    within `first_message_timeout` (30 s) is closed; a console sends 0x43 or 0x27 the
+    moment it is connected. A connection being closed gets 5 seconds
+    (`MAX_CLOSE_WAIT_SECONDS`) and is no longer read for requests meanwhile. Unread
+    replies are capped at 256 KB instead of 1 MB.
+  - Now: 16 kept, a console at another address answered in a millisecond meanwhile, the
+    16 closed after 29 s; the slow frame closed after 30 s.
+
+## 25. No limit on what one address may ask for (high)
+
+- A stranger could: try passwords as fast as the server answers (`limits: passwords`,
+  before: 120 wrong passwords answered in 4 s), create accounts and characters until
+  the disk is full (`limits: accounts`: 60 of 60 created; each account can hold twelve
+  characters of up to 39 KB), make the server write a log line per message for as long
+  as it liked, and keep its one thread busy with requests that cost a password hash or
+  a database write each.
+- Fixed:
+  - A budget per address (Include/Common/RateLimit.hpp, `LobbyServer::ProcessFrames`,
+    `RequestCost`): `requests_per_second` (50) units a second up to `request_burst`
+    (400); a request costs 1, a chat line 2, a game or room opened or a friend-list
+    change 5, a login or a character download 10, an account 20, a character written
+    30 more (`AddRequestCost`). **Nothing is refused**: a connection whose address has
+    used its budget is not read until there is budget again, so the game sees a slow
+    server and no new error. The connections of one address take turns. `limits:
+    budget`: of 3,000 requests at once 553 were answered in 10 s, the rest waited, and
+    a console at another address was answered in 1 ms meanwhile.
+  - Password checks (0x16, 0x64): 40 per address at once, one more every 3 s, right or
+    wrong. Now 46 of the 120 were answered in 20 s. Accounts: 20 per address at once,
+    one more every 3 minutes (`AllowAccountCreation`; refused with the result a taken
+    name gets). Now 19 of 60 (one had been used by the check before).
+  - Source/Database/Database.cpp, `LimitSize`: `PRAGMA max_page_count` from
+    `max_database_mb` (1024). Tried with 16: after 816 characters the next was refused
+    ("database or disk is full", result 1 to the console), the file stood at 16 MB and
+    the server went on.
+  - Source/logging.cpp: 300 lines of a kind at once and 10 a second after that; what
+    was left out is counted in the next line. A line is cut at 600 characters.
+  - Discovery datagrams: one per session every 100 ms is acted on
+    (DiscoveryServer.cpp); each used to send the host a message. The server never
+    answers a datagram by datagram, so there is nothing to amplify.
+  - The limits per address are for strangers: unless `limits_for_local_addresses=1`
+    they leave alone 127.0.0.0/8 and the private ranges (10/8, 172.16/12, 192.168/16),
+    so a test rig on the server's machine or its network runs as before. That matters:
+    `lobby_e2e_test.py --extended` floods on purpose, and with the limits applied to
+    its address it fails from step 30 on (tried: 3 steps of 40 on a first run, 8 on a
+    second straight after).
+
+## 26. Memory the server had not set was sent to another console (medium)
+
+- `RealmUser::m_localPort` was never given a value. A joiner that asks for a game by
+  name (0x57 carries no port) and then sends its datagram made the server send the host
+  notification 0x65 with that field as it lay in memory: four bytes of whatever the
+  allocation held before. `abuse: port` — on the sanitizer build the host received
+  0xbebebebe, the pattern that build fills new memory with. Now 0.
+- Fixed: Include/Game/RealmUser.hpp, the field starts at 0. The new fields of
+  `RealmSocket` are set where they are declared for the same reason.
+
+## 27. Somebody else's game and room (medium)
+
+- A Champions of Norrath console that had only asked about a game (0x0D or 0x25) could
+  send new data for it (0x44), player counts included: `abuse: game-data` made a game
+  count as full. Fixed in RequestUpdateGameData.cpp: only the host.
+- Starting a game closed whatever chat room had the game's name, and anybody can make a
+  room under any free name. Fixed in RequestStartGame.cpp: only the host's own room.
+
+## 28. Passwords (medium)
+
+- How they were kept: PBKDF2-HMAC-SHA256 with 1,000 rounds and a 32-byte salt, as
+  `pbkdf2$rounds$salt$hash`. Not plain, but 1,000 rounds is little against somebody
+  who has the database file; the salt came from a generator seeded with 32 bits; the
+  comparison stopped at the first wrong byte; and a name that does not exist was
+  answered without doing the work, so the time said which names exist.
+- Changed, Include/Crypto/PasswordHash.hpp, Source/Crypto/PasswordHash.cpp,
+  Source/Database/Database.cpp:
+  - 50,000 rounds (`PASSWORD_ROUNDS`), 16 salt bytes from `std::random_device`. The
+    number stays this low because the check runs on the one thread that serves
+    everybody: about 50 ms here. PBKDF2 keeps the two hash states that have taken in
+    the key pads instead of rebuilding them every round, which halves the work per
+    round; 300 combinations of password, salt, rounds and length give the same bytes as
+    the old code.
+  - **Existing databases keep working.** The rounds are part of what is stored, so an
+    old entry checks as before, and `VerifyAccount` stores the password again with the
+    current rounds after a successful check (`UpdatePassword`, new statement). Tried:
+    an account made by the unfixed build (`pbkdf2$1000$…`) logged in on the fixed one,
+    was `pbkdf2$50000$…` afterwards, and logged in again; a wrong password was refused
+    before and after.
+  - The comparison looks at every byte; an unknown name costs one check against a
+    decoy; a stored entry is not trusted to ask for more than 2,000,000 rounds.
+  - No new dependency: the tree's own SHA-256.
+- Not changed: on the wire a password is as good as plain (section "Not fixed").
+
+## 29. Names in the log, and in the database (low)
+
+- Names, room names and chat handles went into log lines as sent. A line break in one
+  started a line of the sender's making, an escape sequence reached the terminal of
+  whoever read the log. Source/logging.cpp: characters below 0x20 and 0x7F are written
+  as `?`.
+- A zero inside an account name ended the name in the database (bound as a C string)
+  but not in the server's memory. RequestCreateAccount.cpp: `VerifyUserData`, which
+  existed and was never called, now refuses control characters and fields longer than
+  32 (name), 64 (password), 128 (e-mail), 32 (date of birth) characters;
+  `VerifyAccount` binds the name with its length.
+- `VerifyAccount` built strings from columns without asking whether they were null, and
+  left its statement in the middle of a query. Both changed. Transaction.hpp uses
+  `std::string` and includes it now.
+
+## 30. Small things found on the way (low)
+
+- `Util::round_up` and `round_down` called `abs()` on values that can be the smallest
+  integer and added past the largest; both are undefined. Only the readers for
+  encrypted strings without a block length call them, and no handler uses those
+  readers, so no message reached this. Utility.cpp and ByteStream.cpp work in 64 bits.
+- `LobbyServer::Run`: `CheckSocketProblem` ran outside the `try` of the loop, so an
+  exception while a connection was being closed would have ended the process; and the
+  frame length was read through a cast to `int32_t *`. Both changed.
+- `LobbyServer::Start` went on when a lobby port could not be opened, and `Run` then
+  used a null pointer. It returns, and `main` ends the program as it does for a
+  gateway port.
+- Source/configuration.cpp: a setting that is not a number ended the server with an
+  uncaught exception at start. `ReadNumber` keeps the default and says so.
+- New settings `con_gateway_port` and `rta_gateway_port` (first of the eight gateway
+  ports of each game, 40800 and 40810 as before): a second instance for testing no
+  longer needs its own build (the note at the end of section 20).
+- Includes for what is used were added where a file relied on another header to bring
+  them (`<cstdint>`, `<stdexcept>`, `<algorithm>`, `<string>`, `<vector>`).
+
+**The checks of 21 to 30.** All against instances of their own, on ports of their own on
+127.0.0.1, started from scratch directories; the server in `bin/` was not touched.
+
+- `tools/lobby_e2e_test.py --extended` and `tools/lobby_fix_checks.py` (both in the
+  reverse-engineering repository, both unchanged): 40 of 40 and 11 of 11 against the
+  fixed tree built with the address and undefined-behaviour sanitizers, which reported
+  nothing; 40 of 40 against a build with the flags of `build.sh`; 40 of 40 against a
+  build with the thread sanitizer, which reported nothing either (there are two threads,
+  section 14).
+- `tools/lobby_fuzz.py` (new, in this repository; Python 3, standard library only,
+  127.0.0.1 only; SECURITY.md says how to run it):
+  - `--mode fuzz`: against the fixed tree with the address and undefined-behaviour
+    sanitizers, set to end the process at the first report: seed 2, 2,914 sessions and
+    677,933 messages in 25 minutes (before the last changes to chat rooms, discovery
+    and 0x18), then seed 3 on the final build, 2,386 sessions and 664,076 messages in
+    20 minutes. No report, and the server answered after every session. With the
+    thread sanitizer: 156 sessions, 34,714 messages, no report. One report did come up
+    on the way and was of this work's own making: a field added to `RealmSocket` and
+    not set (section 26, last sentence).
+  - `--mode abuse`: the ten checks named above. Against the unfixed tree seven fail
+    (port, save, no-login, game-data, relogin, games, rooms; chat, datagrams and
+    no-reader pass: sections 9 and 14 hold). Against the fixed tree all ten pass.
+  - `--mode limits`, against an instance started with `limits_for_local_addresses=1` and with
+    the machine's LAN address as the second address: the five checks pass. Against the
+    unfixed tree slow-frame, connections, passwords and accounts fail.
+- Every source the build uses was run through GCC 15 with its own standard library
+  (`-std=c++20 -fsyntax-only`, the only GCC at hand; macOS, so the POSIX side of
+  Platform.hpp) without an error. **Not compiled on Linux, and not with MSVC.** No new
+  source file: Include/Common/RateLimit.hpp is a header, listed in the project files.
+- bin/config.ini was not touched (a server was running from that directory). The new
+  settings all have defaults; SECURITY.md lists them.
+
 ## Changes to the test client
 
 - It can be started as documented again: Python 3.13+ `argparse` imports the standard
@@ -678,6 +956,44 @@ Added with sections 19 and 20:
 - The minimum of `client_timeout`, 15 seconds, leaves about two seconds over the 760
   frames between two empty frames of an idle game at full speed (live-rig 19.4), and
   nothing when the game runs slower than that. The default of 120 is not affected.
+
+Added with sections 21 to 30:
+
+- None of it was tried with the real game. What a console sends was taken from
+  `docs/lobby-protocol.md` and the two test tools, which pass unchanged; the limits are
+  far above what a console does there, but "a console never does this" is read, not
+  seen, for: logging in twice on one connection, opening a second game or game room
+  without closing the first, entering a game's room after turning to another game.
+- **The save rule of section 21 rests on one unverified step.** A joiner becomes a
+  member of a game, and so of its party, by its own 0x5F; the host is not asked. With
+  the real game the joiner sent 0x5F (lobby-protocol.md 8.5), so real parties are
+  covered. If some path into a game exists that sends no 0x5F, saves of the other
+  players' characters by that console, and of its character by theirs, would now be
+  refused with result 1, where they used to be stored.
+- A lost session keeps its party, but a save for a player whose connection is lost and
+  has not come back still fails, as before (section "Added with sections 16 to 18").
+- The protocol's encryption is one key that is on every disc. Passwords and session ids
+  can be read by anyone on the path, and a session taken over; nothing here can change
+  that without changing the game.
+- The limits are per address. Players behind one router share them (ample for a
+  household), many addresses together are not limited as a whole, and nothing is
+  limited per account. Private and loopback addresses are not limited per address at
+  all unless `limits_for_local_addresses=1`: a server that strangers reach through a
+  proxy or a NAT that gives them such an address has to set it, and raise the limits.
+- The Windows build watches 46 connections at most (`FD_SETSIZE` is 64 there and 18 are
+  listeners); `max_connections` is lowered to that with a warning at start. It was
+  that many before, without the warning.
+- Database writes are still done on the serving thread with SQLite's defaults, one
+  `fsync` per write. The budget of section 25 bounds how many one address can cause;
+  it does not make them cheap.
+- Chat handles are still not unique. E-mail address and date of birth are stored as
+  typed. There is no way to change a password.
+- Not reviewed: Dependency/sqlite, the body of Source/Crypto/rijndael.cpp beyond its
+  entry points (third-party AES; it is given whole blocks only), and the files the
+  build leaves out (Request_5F.cpp, Request_61.cpp, RequestGetFriendList.cpp,
+  Notify_4C.cpp, Notify_65.cpp, NotifyClientReqConnect.cpp,
+  NotifyReserveUserSlot_RTA.cpp). RealmCharacter.cpp's parser is commented out and
+  nothing a client sends reaches what is left of it.
 
 ## Found wrong or missing in docs/lobby-protocol.md
 

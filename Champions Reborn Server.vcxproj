@@ -198,6 +198,7 @@
     <ClInclude Include="Include\Common\Constant.hpp" />
     <ClInclude Include="Include\Common\ForwardDecl.hpp" />
     <ClInclude Include="Include\Common\RLEZ.hpp" />
+    <ClInclude Include="Include\Common\RateLimit.hpp" />
     <ClInclude Include="Include\Common\Utility.hpp" />
     <ClInclude Include="Include\configuration.hpp" />
     <ClInclude Include="Include\Crypto\PasswordHash.hpp" />

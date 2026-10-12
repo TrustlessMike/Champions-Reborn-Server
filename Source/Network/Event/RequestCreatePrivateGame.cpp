@@ -17,7 +17,7 @@ sptr_generic_response RequestCreatePrivateGame::ProcessRequest( sptr_socket sock
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		Log::Error( "User not found! [{}]", m_sessionId );

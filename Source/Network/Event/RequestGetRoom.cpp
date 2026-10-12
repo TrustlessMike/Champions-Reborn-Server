@@ -17,7 +17,7 @@ sptr_generic_response RequestGetRoom::ProcessRequest( sptr_socket socket, sptr_b
 {
 	Deserialize( stream );
 
-	const auto user = UserManager::Get().FindUserBySocket( socket );
+	const auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( !user )
 	{
 		return std::make_shared< ResultGetRoom >( this, GENERAL_ERROR );

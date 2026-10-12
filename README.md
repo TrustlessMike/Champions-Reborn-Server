@@ -7,6 +7,9 @@ adds, on branch `macos-port`:
 - fixes for defects found by testing the server against the lobby protocol as the games speak
   it — see [FIXES.md](FIXES.md) for each one, how the right behaviour was established, and the
   test that covers it.
+- hardening for a server that is reachable from the internet (FIXES.md sections 21 to 30):
+  what is and is not protected, the limits and their settings, and how to run the fuzzer
+  `tools/lobby_fuzz.py` are in [SECURITY.md](SECURITY.md).
 
 The protocol notes and the two-client test used here live in
 [champions-return-to-arms-re](https://github.com/TrustlessMike/champions-return-to-arms-re)

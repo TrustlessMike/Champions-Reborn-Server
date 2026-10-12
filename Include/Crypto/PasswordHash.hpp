@@ -178,35 +178,86 @@ inline void hmac_sha256(
 }
 
 // PBKDF2-HMAC-SHA256
+//
+// The key pads of the HMAC are the same in every round, so the two hash states that
+// have taken them in are computed once and copied for each round: two compressions a
+// round instead of four. The result is the same, bit for bit, as with hmac_sha256.
 inline std::vector<uint8_t> pbkdf2_hmac_sha256(
     const std::string &password,
     const std::vector<uint8_t> &salt,
     uint32_t iterations,
     size_t dkLen )
 {
+    uint8_t k_ipad[ 64 ] = {}, k_opad[ 64 ] = {}, key_hash[ sha256::HASH_SIZE ];
+    const uint8_t *hmacKey = reinterpret_cast< const uint8_t * >( password.data() );
+    size_t hmacKeyLen = password.size();
+
+    if( hmacKeyLen > 64 )
+    {
+        sha256::Context ctx;
+        sha256::Init( ctx );
+        sha256::Update( ctx, hmacKey, hmacKeyLen );
+        sha256::Final( ctx, key_hash );
+        hmacKey = key_hash;
+        hmacKeyLen = sha256::HASH_SIZE;
+    }
+
+    if( hmacKeyLen > 0 )
+    {
+        std::memcpy( k_ipad, hmacKey, hmacKeyLen );
+        std::memcpy( k_opad, hmacKey, hmacKeyLen );
+    }
+
+    for( int i = 0; i < 64; ++i )
+    {
+        k_ipad[ i ] ^= 0x36;
+        k_opad[ i ] ^= 0x5C;
+    }
+
+    sha256::Context innerStart, outerStart;
+    sha256::Init( innerStart );
+    sha256::Update( innerStart, k_ipad, 64 );
+    sha256::Init( outerStart );
+    sha256::Update( outerStart, k_opad, 64 );
+
+    const auto hmac = [ & ]( const uint8_t *data, size_t dataLen, uint8_t out[ sha256::HASH_SIZE ] )
+    {
+        uint8_t inner[ sha256::HASH_SIZE ];
+
+        sha256::Context ctx = innerStart;
+        sha256::Update( ctx, data, dataLen );
+        sha256::Final( ctx, inner );
+
+        ctx = outerStart;
+        sha256::Update( ctx, inner, sha256::HASH_SIZE );
+        sha256::Final( ctx, out );
+    };
+
     std::vector<uint8_t> key( dkLen );
     uint32_t blocks = ( uint32_t )( ( dkLen + sha256::HASH_SIZE - 1 ) / sha256::HASH_SIZE );
+
     std::vector<uint8_t> u( sha256::HASH_SIZE );
     std::vector<uint8_t> t( sha256::HASH_SIZE );
     std::vector<uint8_t> block( salt.size() + 4 );
 
     for( uint32_t i = 1; i <= blocks; ++i )
     {
-        std::memcpy( block.data(), salt.data(), salt.size() );
+        if( !salt.empty() )
+        {
+            std::memcpy( block.data(), salt.data(), salt.size() );
+        }
+
         block[ salt.size() + 0 ] = ( i >> 24 ) & 0xFF;
         block[ salt.size() + 1 ] = ( i >> 16 ) & 0xFF;
         block[ salt.size() + 2 ] = ( i >> 8 ) & 0xFF;
         block[ salt.size() + 3 ] = ( i >> 0 ) & 0xFF;
 
-        hmac_sha256( ( const uint8_t * )password.data(), password.size(),
-                     block.data(), block.size(), u.data() );
-
+        hmac( block.data(), block.size(), u.data() );
         std::memcpy( t.data(), u.data(), sha256::HASH_SIZE );
 
         for( uint32_t j = 1; j < iterations; ++j )
         {
-            hmac_sha256( ( const uint8_t * )password.data(), password.size(),
-                         u.data(), sha256::HASH_SIZE, u.data() );
+            hmac( u.data(), sha256::HASH_SIZE, u.data() );
             for( size_t k = 0; k < sha256::HASH_SIZE; ++k )
                 t[ k ] ^= u[ k ];
         }
@@ -295,5 +346,24 @@ inline std::vector<uint8_t> Base64Decode( const std::string &input )
     return decoded;
 }
 
-std::string HashPassword( const std::string &password, uint32_t iterations, size_t saltLen );
+// How account passwords are kept: "pbkdf2$<rounds>$<salt>$<hash>", salt and hash in
+// Base64, the hash PBKDF2-HMAC-SHA256 of the password. The number of rounds is part of
+// what is stored, so it can be raised: a password stored with fewer rounds still
+// checks, and is stored again with PASSWORD_ROUNDS at its owner's next login
+// (Database::VerifyAccount).
+//
+// 50,000 rounds take about 50 ms on a 2020s desktop core. The check runs on the one
+// thread that serves every client, which is what keeps the number this low (the usual
+// advice for a web service is some hundreds of thousands); password checks are also
+// rationed per address (LobbyServer::ProcessFrames).
+constexpr uint32_t PASSWORD_ROUNDS = 50000;
+constexpr size_t PASSWORD_SALT_BYTES = 16;
+
+// A stored hash is never trusted to ask for more work than this.
+constexpr uint32_t PASSWORD_MAX_ROUNDS = 2000000;
+
+std::string HashPassword( const std::string &password, uint32_t iterations = PASSWORD_ROUNDS, size_t saltLen = PASSWORD_SALT_BYTES );
+
+// True when a stored hash was made with fewer rounds than PASSWORD_ROUNDS.
+bool PasswordNeedsRehash( const std::string &storedHash );
 bool VerifyPassword( const std::string &password, const std::string &storedHash );

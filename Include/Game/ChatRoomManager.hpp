@@ -1,6 +1,9 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <vector>
 #include <mutex>
 #include <string>
 #include <map>
@@ -32,6 +35,10 @@ public:
 	bool LeaveRoom( sptr_user user, const int32_t roomId );
 
 	void OnDisconnectUser( sptr_user user );
+
+	// Game chat rooms the server holds at once, and the longest room name.
+	static constexpr size_t MAX_PRIVATE_ROOMS = 256;
+	static constexpr size_t MAX_ROOM_NAME_LENGTH = 256;
 	bool CreateGameChatSession( sptr_user user, const std::wstring roomName );
 	bool CloseGameChatSession( const std::wstring roomName );
 

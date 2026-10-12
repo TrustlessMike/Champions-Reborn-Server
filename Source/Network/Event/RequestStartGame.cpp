@@ -17,7 +17,7 @@ sptr_generic_response RequestStartGame::ProcessRequest( sptr_socket socket, sptr
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		return std::make_shared< ResultStartGame >( this, FATAL_ERROR );
@@ -36,7 +36,16 @@ sptr_generic_response RequestStartGame::ProcessRequest( sptr_socket socket, sptr
 		return std::make_shared< ResultStartGame >( this, FATAL_ERROR );
 	}
 
-	if( !ChatRoomManager::Get().CloseGameChatSession( session->m_gameName ) )
+	// The game's chat room goes with the start, if it is this host's. A room that
+	// merely has the game's name (anybody can make a room under any free name) is not
+	// the host's to close.
+	const auto gameRoom = ChatRoomManager::Get().FindRoom( session->m_gameName );
+
+	if( gameRoom != nullptr && gameRoom->m_owner.lock() != user )
+	{
+		Log::Error( "Chat room [{}] does not belong to the host of the game of that name, left open", session->m_gameName );
+	}
+	else if( !ChatRoomManager::Get().CloseGameChatSession( session->m_gameName ) )
 	{
 		Log::Error( "Failed to close chat room for game session [{}]", session->m_gameName );
 	}

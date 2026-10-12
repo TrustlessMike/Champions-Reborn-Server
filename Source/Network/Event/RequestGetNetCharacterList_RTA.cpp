@@ -15,7 +15,7 @@ sptr_generic_response RequestGetNetCharacterList_RTA::ProcessRequest( sptr_socke
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( !user )
 	{
 		return std::make_shared< ResultGetNetCharacterList_RTA >( this, FATAL_ERROR, std::nullopt );

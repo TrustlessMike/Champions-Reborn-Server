@@ -171,6 +171,18 @@ void DiscoveryServer::ProcessPacket( sockaddr_in *clientAddr, sptr_byte_stream s
 		return;
 	}
 
+	// The game repeats its datagram on every tenth tick, a sixth of a second apart at
+	// full speed, and one is enough. Each one that is taken sends a message to the
+	// host as well, so a faster stream of them is not passed on.
+	const auto now = std::chrono::steady_clock::now();
+
+	if( now - user->m_lastDiscovery < std::chrono::milliseconds( 100 ) )
+	{
+		return;
+	}
+
+	user->m_lastDiscovery = now;
+
 	// Initialize our discovery information
 	user->m_discoveryAddr = remoteIp;
 	user->m_discoveryPort = remotePort;

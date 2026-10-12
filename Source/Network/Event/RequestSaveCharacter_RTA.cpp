@@ -32,7 +32,7 @@ sptr_generic_response RequestSaveCharacter_RTA::ProcessRequest( sptr_socket sock
 
 	auto &userManager = UserManager::Get();
 
-	auto user = userManager.FindUserBySocket( socket );
+	auto user = userManager.FindLoggedInUser( socket );
 	if( user == nullptr || user->m_accountId == -1 )
 	{
 		return std::make_shared< ResultSaveCharacter_RTA >( this, FATAL_ERROR );
@@ -40,11 +40,26 @@ sptr_generic_response RequestSaveCharacter_RTA::ProcessRequest( sptr_socket sock
 
 	sptr_user targetUser = user;
 
-	if( m_sessionId != m_memberSessionId )
+	// Who is asking is settled by the connection, not by the session id written at
+	// the front of the request. Only the second id, whose character this is, is
+	// looked up.
+	if( m_memberSessionId != user->m_sessionId )
 	{
 		targetUser = userManager.FindUserBySessionId( m_memberSessionId );
+
+		// Saving another player's character is how the game saves: one console of a
+		// party is picked for each character. But only within a party. The two must
+		// have opened or joined the same game; knowing a session id is not enough.
+		if( targetUser != nullptr
+			&& ( user->m_partyGameId < 0 || targetUser->m_partyGameId != user->m_partyGameId
+				 || targetUser->m_gameType != user->m_gameType ) )
+		{
+			Log::Error( "[{}] tried to save the character of [{}], who is not in a game with it",
+						user->m_username, targetUser->m_username );
+			return std::make_shared< ResultSaveCharacter_RTA >( this, FATAL_ERROR );
+		}
 	}
-	
+
 	if( targetUser == nullptr || targetUser->m_accountId == -1 )
 	{
 		Log::Error( "Target user not found or invalid account ID for session: {}", m_memberSessionId );

@@ -17,7 +17,7 @@ sptr_generic_response RequestSetRoomBanner::ProcessRequest( sptr_socket socket, 
 {
 	Deserialize( stream );
 
-	const auto user = UserManager::Get().FindUserBySocket( socket );
+	const auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( !user )
 	{
 		Log::Error( "User not found for socket!" );

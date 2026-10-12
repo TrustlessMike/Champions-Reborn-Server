@@ -31,6 +31,13 @@ inline void SetSocketNonBlocking( SOCKET fd )
 	ioctlsocket( fd, FIONBIO, &enabled );
 }
 
+// How many client connections select() can watch besides the server's 18 listeners:
+// Winsock's fd_set holds FD_SETSIZE handles, and FD_SET ignores any beyond that.
+inline size_t MaxSelectableSockets()
+{
+	return FD_SETSIZE > 26 ? FD_SETSIZE - 18 : 8;
+}
+
 #else
 
 #include <arpa/inet.h>
@@ -68,6 +75,14 @@ inline bool SocketWouldBlock( int err )
 inline bool SocketFitsSelect( SOCKET fd )
 {
 	return fd >= 0 && fd < FD_SETSIZE;
+}
+
+// How many client connections select() can watch: descriptors below FD_SETSIZE, less
+// those the server needs for its 18 listeners, its database, its log files and the
+// standard streams.
+inline size_t MaxSelectableSockets()
+{
+	return FD_SETSIZE > 72 ? FD_SETSIZE - 64 : 8;
 }
 
 inline void SetSocketNonBlocking( SOCKET fd )

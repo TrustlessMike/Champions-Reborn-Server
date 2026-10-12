@@ -153,6 +153,7 @@ bool GameSession::AddMember( sptr_user user )
 	}
 
 	user->m_gameId = m_gameId;
+	user->m_partyGameId = m_gameId;
 
 	m_members[ freeIndex ] = user;
 	m_currentPlayers++;

@@ -21,7 +21,7 @@ sptr_generic_response RequestMatchGame_RTA::ProcessRequest( sptr_socket socket, 
 	// answer is "invalid session", and the connection stays open: the game takes that
 	// result as fatal and tells the player, whereas a list that looks valid followed
 	// by a forced logout and a close made it connect and ask again without end.
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr || !user->m_isLoggedIn )
 	{
 		return std::make_shared< ResultMatchGame_RTA >( this, INVALID_SESSION, "" );

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -12,6 +14,11 @@ public:
 	~ChatRoomSession();
 
 	bool AddMember( sptr_user user );
+	void DropExpiredMembers();
+
+	// More than the server has connections for; the member list of a room is sent
+	// whole to whoever enters it.
+	static constexpr size_t MAX_MEMBERS = 512;
 	bool RemoveMember( sptr_user user );
 	bool IsMember( sptr_user user );
 	bool IsPublic() const;

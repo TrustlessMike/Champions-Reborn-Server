@@ -1,6 +1,10 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <mutex>
 #include <vector>
 
@@ -36,6 +40,15 @@ public:
 
 	void OnDisconnectUser( sptr_user user );
 
+	// Takes the user out of every game but the one named (-1 for none): its own
+	// games are removed, its places in others given back.
+	void LeaveGames( const sptr_user &user, const int32_t exceptGameId );
+
+	// Games the server lists at once, per game type, and the longest name or info
+	// string (the game's own list takes 256 characters of info).
+	static constexpr size_t MAX_GAMES = 256;
+	static constexpr size_t MAX_GAME_NAME_LENGTH = 256;
+
 	bool CreateGameSession_CON( sptr_user user,
 								const std::wstring gameInfo,
 								const std::wstring name,
@@ -62,6 +75,7 @@ public:
 	std::vector< sptr_game_session > GetPrivateGameSessionList( const RealmGameType clientType ) const;
 
 private:
+	bool MayCreateGame( const std::wstring &gameInfo, const std::wstring &name, const RealmGameType gameType );
 	void ProcessJoinNorrath( sptr_user join, sptr_user host );
 	void ProcessJoinArms( sptr_user join, sptr_user host );
 };

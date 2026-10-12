@@ -21,8 +21,9 @@ public:
 class ResultMatchGame : public GenericResponse {
 private:
 	std::string m_userIp;
+	bool m_listGames = true;
 
 public:
-	ResultMatchGame( GenericRequest *request, std::string userIp );
+	ResultMatchGame( GenericRequest *request, std::string userIp, bool listGames = true );
 	void Serialize( ByteBuffer &out ) const;
 };

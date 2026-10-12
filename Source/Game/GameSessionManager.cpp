@@ -1,5 +1,7 @@
 #include "Game/GameSessionManager.hpp"
 
+#include <algorithm>
+
 #include "Game/RealmUser.hpp"
 #include "Network/Event/NotifyGameDiscovered.hpp"
 #include "Network/Event/NotifyClientDiscovered.hpp"
@@ -21,34 +23,93 @@ GameSessionManager::~GameSessionManager()
 
 void GameSessionManager::OnDisconnectUser( sptr_user user )
 {
-	if( !user || user->m_gameId < 0 )
+	if( !user )
 		return;
 
-	const auto gameId = user->m_gameId;
-	const auto gameType = user->m_gameType;
+	// Every game, not only the one the user points at now: a user could open a game,
+	// then ask about somebody else's and leave, and its own game stayed in the list
+	// with nobody behind it.
+	LeaveGames( user, -1 );
 
-	auto session = FindGame( gameId, gameType );
-	if( !session )
+	user->m_gameId = -1;
+	user->m_isHost = false;
+}
+
+// Takes the user out of every game except the one named: a game it owns is removed,
+// a place it holds in somebody else's is given back. Games whose owner no longer
+// exists go as well.
+void GameSessionManager::LeaveGames( const sptr_user &user, const int32_t exceptGameId )
+{
+	if( !user )
 		return;
 
-	const auto owner = session->GetOwner();
-	if( !owner )
+	std::lock_guard< std::mutex > lock( m_dataMutex );
+
+	for( auto &gameList : m_gameSessionList )
 	{
-		Log::Error( "Game session owner not found! [{}]", gameId );
-		ForceTerminateGame( gameId, gameType );
-		return;
+		for( auto it = gameList.begin(); it != gameList.end(); )
+		{
+			const auto &session = *it;
+			const auto owner = session->GetOwner();
+
+			if( owner == nullptr )
+			{
+				Log::Info( "Game session [{}] has no owner any more, removing it", session->m_gameId );
+				it = gameList.erase( it );
+				continue;
+			}
+
+			if( session->m_gameId == exceptGameId )
+			{
+				++it;
+				continue;
+			}
+
+			if( owner == user )
+			{
+				Log::Info( "Game session [{}] was left by its owner, removing it", session->m_gameId );
+				it = gameList.erase( it );
+				continue;
+			}
+
+			for( auto &member : session->m_members )
+			{
+				if( member.lock() == user )
+				{
+					member.reset();
+
+					if( session->m_currentPlayers > 0 )
+					{
+						session->m_currentPlayers--;
+					}
+
+					Log::Info( "Removed user [{}] from game session [{}]", user->m_username, session->m_gameName );
+				}
+			}
+
+			++it;
+		}
+	}
+}
+
+// Whether one more game may be opened, and under this name.
+bool GameSessionManager::MayCreateGame( const std::wstring &gameInfo, const std::wstring &name, const RealmGameType gameType )
+{
+	if( name.length() > MAX_GAME_NAME_LENGTH || gameInfo.length() > MAX_GAME_NAME_LENGTH )
+	{
+		Log::Error( "Game name or game info is longer than {} characters", MAX_GAME_NAME_LENGTH );
+		return false;
 	}
 
-	if( owner->m_sessionId == user->m_sessionId )
+	std::lock_guard< std::mutex > lock( m_dataMutex );
+
+	if( m_gameSessionList[ gameType ].size() >= MAX_GAMES )
 	{
-		Log::Info( "Game session owner disconnected! [{}]", gameId );
-		ForceTerminateGame( gameId, gameType );
+		Log::Error( "There are {} games already, no more can be opened", MAX_GAMES );
+		return false;
 	}
-	else
-	{
-		// A member who was not the owner gives its place back.
-		session->RemoveMember( user );
-	}
+
+	return true;
 }
 
 bool GameSessionManager::CreateGameSession_CON( sptr_user user,
@@ -57,6 +118,20 @@ bool GameSessionManager::CreateGameSession_CON( sptr_user user,
 												const std::wstring stage,
 												bool isPrivateGame )
 {
+	if( !user )
+	{
+		return false;
+	}
+
+	// A session has one game. Opening another closes the one before (and nothing
+	// stopped a session from opening them by the thousand).
+	LeaveGames( user, -1 );
+
+	if( !MayCreateGame( gameInfo, name, RealmGameType::CHAMPIONS_OF_NORRATH ) )
+	{
+		return false;
+	}
+
 	if( name.empty() )
 	{
 		Log::Error( "Invalid parameters for creating game session!" );
@@ -96,9 +171,22 @@ bool GameSessionManager::CreateGameSession_RTA(
 	const std::array< int8_t, 5 > &attributes,
 	const bool isPrivateGame )
 {
+	if( !user )
+	{
+		return false;
+	}
+
 	if( nullptr != FindGame( name, RealmGameType::RETURN_TO_ARMS ) )
 	{
 		Log::Error( "Game name is already in use! [{}]", name );
+		return false;
+	}
+
+	// A session has one game. Opening another closes the one before.
+	LeaveGames( user, -1 );
+
+	if( !MayCreateGame( gameInfo, name, RealmGameType::RETURN_TO_ARMS ) )
+	{
 		return false;
 	}
 

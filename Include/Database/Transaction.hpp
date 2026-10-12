@@ -2,6 +2,7 @@
 
 #include <sqlite3.h>
 #include <stdexcept>
+#include <string>
 
 class SQLiteTransaction {
 	sqlite3 *m_db = nullptr;

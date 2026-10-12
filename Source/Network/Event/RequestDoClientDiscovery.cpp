@@ -17,7 +17,7 @@ sptr_generic_response RequestDoClientDiscovery::ProcessRequest( sptr_socket sock
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		return std::make_shared< ResultDoClientDiscovery >( this, DISCOVERY_REPLY::FATAL_ERROR, "", 0 );
@@ -33,6 +33,10 @@ sptr_generic_response RequestDoClientDiscovery::ProcessRequest( sptr_socket sock
 	{
 		return std::make_shared< ResultDoClientDiscovery >( this, DISCOVERY_REPLY::GAME_FULL, "", 0 );
 	}
+
+	// Turning to this game means leaving any other: a game of its own is closed, a
+	// place in somebody else's given back.
+	GameSessionManager::Get().LeaveGames( user, session->m_gameId );
 
 	user->m_gameId = m_gameId;
 	user->m_isHost = false;

@@ -18,7 +18,7 @@ sptr_generic_response RequestSendInstantMessage::ProcessRequest( sptr_socket soc
 {
 	Deserialize( stream );
 
-	const auto user = UserManager::Get().FindUserBySocket( socket );
+	const auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( !user )
 	{
 		Log::Error( "User not found for socket!" );

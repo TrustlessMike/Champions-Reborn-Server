@@ -278,7 +278,15 @@ std::string ByteBuffer::read_encrypted_utf8( bool hasBlockLength )
 	else
 	{
 		decryptedLength = read_u32();
-		encryptedLength = Util::round_up( decryptedLength, 16 );
+		// Rounded up to whole blocks in 64 bits; a length that does not fit is malformed.
+		const uint64_t rounded = ( static_cast< uint64_t >( decryptedLength ) + 15 ) / 16 * 16;
+
+		if( rounded > 0xFFFFFFF0u )
+		{
+			throw std::out_of_range( "read_encrypted: Invalid length" );
+		}
+
+		encryptedLength = static_cast< uint32_t >( rounded );
 	}
 
 	require( encryptedLength, "read_encrypted_utf8" );
@@ -320,7 +328,15 @@ std::wstring ByteBuffer::read_encrypted_utf16( bool hasBlockLength )
 	else
 	{
 		decryptedLength = read_u32();
-		encryptedLength = Util::round_up( decryptedLength, 16 );
+		// Rounded up to whole blocks in 64 bits; a length that does not fit is malformed.
+		const uint64_t rounded = ( static_cast< uint64_t >( decryptedLength ) + 15 ) / 16 * 16;
+
+		if( rounded > 0xFFFFFFF0u )
+		{
+			throw std::out_of_range( "read_encrypted: Invalid length" );
+		}
+
+		encryptedLength = static_cast< uint32_t >( rounded );
 	}
 
 	require( encryptedLength, "read_encrypted_utf16" );

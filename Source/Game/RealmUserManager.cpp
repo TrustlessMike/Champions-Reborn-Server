@@ -1,6 +1,8 @@
 #include "Game/RealmUserManager.hpp"
 
 #include <algorithm>
+#include <cstdint>
+#include <stdexcept>
 
 #include "Game/GameSessionManager.hpp"
 #include "Game/ChatRoomManager.hpp"
@@ -15,9 +17,6 @@
 
 UserManager::UserManager()
 {
-	std::random_device rd;
-	rng.seed( rd() );
-
 	m_users.clear();
 }
 
@@ -25,20 +24,49 @@ UserManager::~UserManager()
 {
 }
 
+// A session id is what a console shows to be taken for a logged-in account, so nobody
+// may be able to work one out. Each is 64 bits straight from the system's random
+// source. (They used to come from a generator seeded once with 32 bits, whose every
+// later output follows from two ids seen.)
 std::wstring UserManager::GenerateSessionId()
 {
 	static const wchar_t charset[] = L"0123456789ABCDEF";
-	std::uniform_int_distribution<int> dist( 0, 15 );
 
-	std::wstring sessionId;
-	sessionId.reserve( MAX_SESSION_ID_LENGTH );
-
-	for( int i = 0; i < MAX_SESSION_ID_LENGTH; ++i )
+	for( int attempt = 0; attempt < 8; ++attempt )
 	{
-		sessionId += charset[ dist( rng ) ];
+		uint64_t bits = ( static_cast< uint64_t >( m_randomDevice() ) << 32 ) ^ static_cast< uint64_t >( m_randomDevice() );
+
+		std::wstring sessionId;
+		sessionId.reserve( MAX_SESSION_ID_LENGTH );
+
+		for( int i = 0; i < MAX_SESSION_ID_LENGTH; ++i )
+		{
+			sessionId += charset[ bits & 0xF ];
+			bits >>= 4;
+		}
+
+		bool taken = false;
+		{
+			std::lock_guard< std::mutex > lock( m_mutex );
+
+			for( const auto &user : m_users )
+			{
+				taken = taken || user->m_sessionId == sessionId;
+			}
+
+			for( const auto &lost : m_lostSessions )
+			{
+				taken = taken || lost.m_sessionId == sessionId;
+			}
+		}
+
+		if( !taken )
+		{
+			return sessionId;
+		}
 	}
 
-	return sessionId;
+	throw std::runtime_error( "GenerateSessionId: no unused session id" );
 }
 
 sptr_user UserManager::CreateUser( sptr_socket socket, RealmGameType clientType )
@@ -65,6 +93,31 @@ void UserManager::RemoveUser( sptr_user user )
 		return;
 	}
 
+	Log::Debug( "RemoveUser : [{}][{}]", user->m_username, user->m_sessionId );
+
+	EndSession( user );
+
+	std::lock_guard< std::mutex > lock( m_mutex );
+
+	// EndSession tells friends; look the user up again in case that moved anything.
+	it = std::find( m_users.begin(), m_users.end(), user );
+	if( it != m_users.end() )
+	{
+		m_users.erase( it );
+	}
+}
+
+// Everything a session holds besides its connection: its games and their places, its
+// chat rooms, an upload it had begun, its friends' view of it. Used when the user goes,
+// and when a connection that is logged in logs in again (which used to leave the old
+// session's game, rooms and upload behind for good).
+void UserManager::EndSession( const sptr_user &user )
+{
+	if( !user )
+	{
+		return;
+	}
+
 	GameSessionManager::Get().OnDisconnectUser( user );
 	ChatRoomManager::Get().OnDisconnectUser( user );
 
@@ -75,12 +128,26 @@ void UserManager::RemoveUser( sptr_user user )
 		CharacterSaveManager::Get().m_tasks.erase( user->m_sessionId );
 	}
 
-	NotifyFriendsOnlineStatus( user, false );
+	if( user->m_isLoggedIn )
+	{
+		NotifyFriendsOnlineStatus( user, false );
+	}
 
-	Log::Debug( "RemoveUser : [{}][{}]", user->m_username, user->m_sessionId );
-
-	std::lock_guard< std::mutex > lock( m_mutex );
-	m_users.erase( it );
+	// From here on nothing finds this user by its session id or its handle.
+	user->m_sessionId.clear();
+	user->m_isLoggedIn = false;
+	user->m_isHost = false;
+	user->m_gameId = -1;
+	user->m_partyGameId = -1;
+	user->m_publicRoomId = -1;
+	user->m_privateRoomId = -1;
+	user->m_accountId = -1;
+	user->m_characterId = 0;
+	user->m_character.reset();
+	user->m_friendList.clear();
+	user->m_ignoreList.clear();
+	user->m_discoveryAddr.clear();
+	user->m_discoveryPort = 0;
 }
 
 void UserManager::RemoveUser( const std::wstring &sessionId )
@@ -153,6 +220,7 @@ void UserManager::OnConnectionLost( const sptr_socket socket )
 		lost.m_characterId = user->m_characterId;
 		lost.m_character = user->m_character;
 		lost.m_publicRoomId = user->m_publicRoomId;		// RemoveUser, below, leaves it
+		lost.m_partyGameId = user->m_partyGameId;
 		lost.m_lostAt = std::chrono::steady_clock::now();
 
 		std::lock_guard< std::mutex > lock( m_mutex );
@@ -239,6 +307,12 @@ bool UserManager::ResumeSession( const sptr_user &user, const std::wstring &sess
 	user->m_characterId = lost.m_characterId;
 	user->m_character = lost.m_character;
 
+	// Who was in a game together is what says whose character a console may save
+	// (RequestSaveCharacter_RTA), and the consoles go on playing while one of them is
+	// away from the lobby. Its place in a game the server still lists is another
+	// matter: the lost connection gave that up, and that is not undone.
+	user->m_partyGameId = lost.m_partyGameId;
+
 	// The rest is what a login does.
 	user->m_friendList = Database::Get().LoadFriends( lost.m_accountId );
 	user->m_ignoreList = Database::Get().LoadIgnores( lost.m_accountId );
@@ -264,10 +338,17 @@ bool UserManager::ResumeSession( const sptr_user &user, const std::wstring &sess
 
 sptr_user UserManager::FindUserBySessionId( const std::wstring &sessionId )
 {
+	// Only a logged-in user has a session id. Without this check an empty id found
+	// the first connection that had not logged in yet.
+	if( sessionId.length() != MAX_SESSION_ID_LENGTH )
+	{
+		return nullptr;
+	}
+
 	std::lock_guard<std::mutex> lock( m_mutex );
 	auto it = std::find_if( m_users.begin(), m_users.end(), [ & ]( const sptr_user &user )
 	{
-		return user->m_sessionId == sessionId;
+		return user->m_isLoggedIn && user->m_sessionId == sessionId;
 	} );
 	return ( it != m_users.end() ) ? *it : nullptr;
 }
@@ -282,12 +363,25 @@ sptr_user UserManager::FindUserBySocket( const sptr_socket &socket )
 	return ( it != m_users.end() ) ? *it : nullptr;
 }
 
+sptr_user UserManager::FindLoggedInUser( const sptr_socket &socket )
+{
+	auto user = FindUserBySocket( socket );
+
+	return ( user != nullptr && user->m_isLoggedIn ) ? user : nullptr;
+}
+
 sptr_user UserManager::FindUserByChatHandle( const std::wstring &handle )
 {
+	// A connection that has not logged in has no handle; an empty one names nobody.
+	if( handle.empty() )
+	{
+		return nullptr;
+	}
+
 	std::lock_guard<std::mutex> lock( m_mutex );
 	auto it = std::find_if( m_users.begin(), m_users.end(), [ & ]( const sptr_user &user )
 	{
-		return user->m_chatHandle == handle;
+		return user->m_isLoggedIn && user->m_chatHandle == handle;
 	} );
 	return ( it != m_users.end() ) ? *it : nullptr;
 }

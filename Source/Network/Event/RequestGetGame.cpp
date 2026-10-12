@@ -17,7 +17,7 @@ sptr_generic_response RequestGetGame::ProcessRequest( sptr_socket socket, sptr_b
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		Log::Error( "User not found! [{}]", m_sessionId );
@@ -45,6 +45,10 @@ sptr_generic_response RequestGetGame::ProcessRequest( sptr_socket socket, sptr_b
 		Log::Error( "Game session owner not found! [{}]", m_gameName );
 		return std::make_shared< ResultGetGame >( this, TIMEOUT );
 	}
+
+	// Turning to this game means leaving any other: a game of its own is closed, a
+	// place in somebody else's given back.
+	GameSessionManager::Get().LeaveGames( user, session->m_gameId );
 
 	user->m_isHost = false;
 	user->m_gameId = session->m_gameId;

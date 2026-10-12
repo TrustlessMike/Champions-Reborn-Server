@@ -18,7 +18,7 @@ sptr_generic_response RequestUserJoinSuccess::ProcessRequest( sptr_socket socket
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		return std::make_shared< ResultUserJoinSuccess >( this, FATAL_ERROR );

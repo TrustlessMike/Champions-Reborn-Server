@@ -16,7 +16,7 @@ sptr_generic_response RequestRemoveIgnore::ProcessRequest( sptr_socket socket, s
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		return std::make_shared< ResultRemoveIgnore >( this, FATAL_ERROR );

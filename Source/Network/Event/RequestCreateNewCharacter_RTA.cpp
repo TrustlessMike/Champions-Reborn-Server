@@ -26,7 +26,7 @@ sptr_generic_response RequestCreateNewCharacter_RTA::ProcessRequest( sptr_socket
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		Log::Error( "User not found! [{}]", m_sessionId );

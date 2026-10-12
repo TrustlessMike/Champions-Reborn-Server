@@ -16,7 +16,7 @@ sptr_generic_response RequestEnterRoom::ProcessRequest( sptr_socket socket, sptr
 {
 	Deserialize( stream );
 
-	const auto user = UserManager::Get().FindUserBySocket( socket );
+	const auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( !user )
 	{
 		Log::Error( "User not found for socket!" );

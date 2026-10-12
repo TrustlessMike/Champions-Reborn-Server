@@ -43,11 +43,19 @@ sptr_generic_response RequestMatchGame::ProcessRequest( sptr_socket socket, sptr
 {
 	Deserialize( stream );
 
+	// The list holds the hosts' addresses; it is for consoles that have logged in. Anything
+	// else gets the same reply with nothing in it.
+	if( nullptr == UserManager::Get().FindLoggedInUser( socket ) )
+	{
+		return std::make_shared< ResultMatchGame >( this, "", false );
+	}
+
 	return std::make_shared< ResultMatchGame >( this, socket->remote_ip );
 }
 
-ResultMatchGame::ResultMatchGame( GenericRequest *request, std::string userIp ) : GenericResponse( *request )
+ResultMatchGame::ResultMatchGame( GenericRequest *request, std::string userIp, bool listGames ) : GenericResponse( *request )
 {
+	m_listGames = listGames;
 	m_userIp = userIp;
 }
 
@@ -57,7 +65,9 @@ void ResultMatchGame::Serialize( ByteBuffer &out ) const
 	out.write_u32( m_trackId );
 	out.write_u32( 0 );
 
-	const auto publicGameList = GameSessionManager::Get().GetAvailableGameSessionList( RealmGameType::CHAMPIONS_OF_NORRATH );
+	const auto publicGameList = m_listGames
+		? GameSessionManager::Get().GetAvailableGameSessionList( RealmGameType::CHAMPIONS_OF_NORRATH )
+		: std::vector< sptr_game_session >();
 	const auto publicGameCount = static_cast< uint32_t >( publicGameList.size() );
 
 	out.write_u32( publicGameCount );

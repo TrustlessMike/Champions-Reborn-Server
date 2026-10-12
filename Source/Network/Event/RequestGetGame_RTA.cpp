@@ -18,7 +18,7 @@ sptr_generic_response RequestGetGame_RTA::ProcessRequest( sptr_socket socket, sp
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		Log::Error( "User not found! [{}]", m_sessionId );
@@ -53,6 +53,10 @@ sptr_generic_response RequestGetGame_RTA::ProcessRequest( sptr_socket socket, sp
 		Log::Error( "Game session is not open yet! [{}]", m_gameName );
 		return std::make_shared< ResultGetGame_RTA >( this, NOT_FOUND );
 	}
+
+	// Turning to this game means leaving any other: a game of its own is closed, a
+	// place in somebody else's given back.
+	GameSessionManager::Get().LeaveGames( user, session->m_gameId );
 
 	user->m_isHost = false;
 	user->m_gameId = session->m_gameId;

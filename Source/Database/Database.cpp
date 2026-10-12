@@ -3,6 +3,7 @@
 #include "Crypto/PasswordHash.hpp"
 #include "Game/RealmCharacter.hpp"
 #include "Game/RealmCharacterMetaKV.hpp"
+#include "configuration.hpp"
 #include "logging.hpp"
 
 #include <filesystem>
@@ -31,7 +32,11 @@ Database::Database()
 		);
 	}
 
+	// Wait a moment rather than fail when something else (a backup) has the file.
+	sqlite3_busy_timeout( m_db, 2000 );
+
 	CreateTables();
+	LimitSize();
 	PrepareStatements();
 }
 
@@ -40,6 +45,30 @@ Database::~Database()
 	FinalizeStatements();
 	if( m_db )
 		sqlite3_close( m_db );
+}
+
+// The file may not grow beyond Config::max_database_mb: whoever fills it with accounts
+// and characters is stopped by SQLite ("database or disk is full") before the disk is.
+void Database::LimitSize()
+{
+	int64_t pageSize = 4096;
+
+	sqlite3_stmt *stmt = nullptr;
+	if( sqlite3_prepare_v2( m_db, "PRAGMA page_size;", -1, &stmt, nullptr ) == SQLITE_OK && sqlite3_step( stmt ) == SQLITE_ROW )
+	{
+		pageSize = sqlite3_column_int64( stmt, 0 );
+	}
+	sqlite3_finalize( stmt );
+
+	if( pageSize < 512 )
+	{
+		pageSize = 4096;
+	}
+
+	const int64_t pages = static_cast< int64_t >( Config::max_database_mb ) * 1024 * 1024 / pageSize;
+	const std::string sql = "PRAGMA max_page_count = " + std::to_string( pages ) + ";";
+
+	Execute( sql.c_str() );
 }
 
 void Database::CreateTables()
@@ -86,6 +115,8 @@ void Database::PrepareStatements()
 		{ QueryID::VerifyAccount,
 		"SELECT account_id, username, password, chat_handle FROM RealmUsers WHERE username = ?;" },
 
+		{ QueryID::UpdatePassword,
+		"UPDATE RealmUsers SET password = ? WHERE account_id = ?;" },
 		{ QueryID::LoadAccount,
 		"SELECT email_address, date_of_birth, chat_handle FROM RealmUsers WHERE account_id = ?;" },
 
@@ -180,7 +211,7 @@ int64_t Database::CreateNewAccount( const std::string &username,
 {
 	try
 	{
-		auto hashedPassword = HashPassword( password, 1000, 32 );
+		auto hashedPassword = HashPassword( password );
 		auto stmt = m_statements[ QueryID::CreateAccount ];
 
 		SQLiteTransaction tx( m_db );
@@ -214,28 +245,49 @@ int64_t Database::CreateNewAccount( const std::string &username,
 std::tuple< bool, int64_t, std::wstring >
 Database::VerifyAccount( const std::wstring &username, const std::wstring &password )
 {
+	sqlite3_stmt *stmt = nullptr;
+
 	try
 	{
-		auto stmt = m_statements[ QueryID::VerifyAccount ];
+		stmt = m_statements[ QueryID::VerifyAccount ];
+
 		auto username_utf8 = Util::WideToUTF8( username );
 		auto password_utf8 = Util::WideToUTF8( password );
 
 		sqlite3_reset( stmt );
 		sqlite3_clear_bindings( stmt );
 
-		sqlite3_bind_text( stmt, 1, username_utf8.c_str(), -1, SQLITE_TRANSIENT );
+		// With its length: a name with a zero in it is not the name before the zero.
+		sqlite3_bind_text( stmt, 1, username_utf8.data(), static_cast< int >( username_utf8.size() ), SQLITE_TRANSIENT );
 
-		// Execute the statement
-		if( sqlite3_step( stmt ) == SQLITE_ROW )
+		const int rc = sqlite3_step( stmt );
+
+		if( rc == SQLITE_ROW )
 		{
-			int64_t accountId = sqlite3_column_int64( stmt, 0 );
-			const char *dbUsername = reinterpret_cast< const char * >( sqlite3_column_text( stmt, 1 ) );
-			const char *dbPassword = reinterpret_cast< const char * >( sqlite3_column_text( stmt, 2 ) );
-			const char *dbChatHandle = reinterpret_cast< const char * >( sqlite3_column_text( stmt, 3 ) );
+			const int64_t accountId = sqlite3_column_int64( stmt, 0 );
+
+			const char *dbUsernameText = reinterpret_cast< const char * >( sqlite3_column_text( stmt, 1 ) );
+			const char *dbPasswordText = reinterpret_cast< const char * >( sqlite3_column_text( stmt, 2 ) );
+			const char *dbChatHandleText = reinterpret_cast< const char * >( sqlite3_column_text( stmt, 3 ) );
+
+			// Copied, and the statement let go, before anything else is done with them.
+			const std::string dbUsername = dbUsernameText ? dbUsernameText : "";
+			const std::string dbPassword = dbPasswordText ? dbPasswordText : "";
+			const std::string dbChatHandle = dbChatHandleText ? dbChatHandleText : "";
+
+			sqlite3_reset( stmt );
 
 			if( username_utf8 == dbUsername && VerifyPassword( password_utf8, dbPassword ) )
 			{
 				Log::Debug( "Account verified: {} (ID: {})", username, accountId );
+
+				// Stored with fewer rounds than are used now: stored again, now that
+				// the password is at hand.
+				if( PasswordNeedsRehash( dbPassword ) )
+				{
+					UpdatePassword( accountId, HashPassword( password_utf8 ) );
+				}
+
 				return std::make_tuple( true, accountId, Util::UTF8ToWide( dbChatHandle ) );
 			}
 			else
@@ -244,21 +296,64 @@ Database::VerifyAccount( const std::wstring &username, const std::wstring &passw
 				return std::make_tuple( false, -1, L"" );
 			}
 		}
-		else if( sqlite3_step( stmt ) == SQLITE_DONE )
+
+		sqlite3_reset( stmt );
+
+		if( rc == SQLITE_DONE )
 		{
-			return std::make_tuple( false, -1, L"" ); // No matching account found
+			// No such account. The work of a check is done all the same, so that the
+			// time an answer takes does not say which names exist.
+			static const std::string decoy = HashPassword( "no such account" );
+			( void )VerifyPassword( password_utf8, decoy );
+
+			return std::make_tuple( false, -1, L"" );
 		}
-		else
-		{
-			throw std::runtime_error( "Query failed: " + std::string( sqlite3_errmsg( m_db ) ) );
-		}
+
+		throw std::runtime_error( "Query failed: " + std::string( sqlite3_errmsg( m_db ) ) );
 	}
 	catch( const std::exception &e )
 	{
 		Log::Error( "Database error: {}", std::string( e.what() ) );
 	}
 
+	if( stmt )
+	{
+		sqlite3_reset( stmt );
+	}
+
 	return std::make_tuple( false, -1, L"" );
+}
+
+bool Database::UpdatePassword( const int64_t account_id, const std::string &hashedPassword )
+{
+	try
+	{
+		auto stmt = m_statements[ QueryID::UpdatePassword ];
+
+		SQLiteTransaction tx( m_db );
+		{
+			sqlite3_reset( stmt );
+			sqlite3_clear_bindings( stmt );
+
+			sqlite3_bind_text( stmt, 1, hashedPassword.c_str(), -1, SQLITE_TRANSIENT );
+			sqlite3_bind_int64( stmt, 2, account_id );
+
+			if( sqlite3_step( stmt ) != SQLITE_DONE )
+			{
+				throw std::runtime_error( "Update failed: " + std::string( sqlite3_errmsg( m_db ) ) );
+			}
+		}
+		tx.commit();
+
+		Log::Info( "Password of account {} stored again with {} rounds", account_id, PASSWORD_ROUNDS );
+		return true;
+	}
+	catch( const std::exception &e )
+	{
+		Log::Error( "Database error: {}", std::string( e.what() ) );
+	}
+
+	return false;
 }
 
 std::tuple< bool, std::wstring, std::wstring > Database::LoadAccount( const int64_t account_id )

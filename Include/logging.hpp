@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <fstream>
@@ -7,6 +8,7 @@
 #include <sstream>
 #include <type_traits>
 
+#include "Common/RateLimit.hpp"
 #include "Common/Utility.hpp"
 
 class Log {
@@ -22,6 +24,12 @@ private:
 	static inline int32_t current_open_hour;
 	static inline std::fstream file_stream[ num_log_type ];
 	static inline std::mutex log_lock;
+
+	// Lines of one kind written at once, and per second after that (logging.cpp).
+	static constexpr double LINES_AT_ONCE = 300.0;
+	static constexpr double LINES_PER_SECOND = 10.0;
+	static inline TokenBucket line_budget[ num_log_type ];
+	static inline uint64_t suppressed_lines[ num_log_type ] = {};
 
 	static const char *GetTimeStamp();
 	static void CheckFileStatus( LOG_TYPE type );

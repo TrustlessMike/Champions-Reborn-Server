@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -57,8 +58,27 @@ public:
 	uint32_t last_write_position;
 	uint64_t latency;
 
+	// last_recv_time is when the last complete frame arrived (or the connection was
+	// made), not the last byte: a frame fed in a byte at a time keeps nothing alive.
 	std::chrono::steady_clock::time_point last_recv_time;
 	std::chrono::steady_clock::time_point last_send_time;
+	std::chrono::steady_clock::time_point connected_time = std::chrono::steady_clock::now();
+
+	// Complete frames received so far.
+	uint64_t frames_received = 0;
+
+	// Address as a number (host byte order), and whether the limits per address
+	// leave it alone (configuration.hpp, limits_for_local_addresses).
+	uint32_t address_key = 0;
+	bool limits_exempt = false;
+
+	// Requests of this connection are not read before this time: its address has
+	// used up its budget (LobbyServer::ProcessFrames).
+	std::chrono::steady_clock::time_point paused_until{};
+
+	// When the server decided to close the connection once its replies are out.
+	bool close_wait_started = false;
+	std::chrono::steady_clock::time_point close_wait_since{};
 
 	std::mutex write_mutex;
 	std::mutex read_mutex;

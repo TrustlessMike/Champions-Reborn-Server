@@ -34,6 +34,7 @@ public:
 	sptr_user m_targetUser;
 
     uint32_t m_characterId;
+    int64_t m_targetAccountId;      // Account the data goes to, as it was when the upload began
     uint32_t m_writePosition;
 
     // The request that started the upload (0x58 or 0x5E). The game waits for the

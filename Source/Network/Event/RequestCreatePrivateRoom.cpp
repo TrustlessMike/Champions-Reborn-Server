@@ -16,7 +16,7 @@ sptr_generic_response RequestCreatePrivateRoom::ProcessRequest( sptr_socket sock
 {
 	Deserialize( stream );
 
-	auto user = UserManager::Get().FindUserBySocket( socket );
+	auto user = UserManager::Get().FindLoggedInUser( socket );
 	if( user == nullptr )
 	{
 		return std::make_shared< ResultCreatePrivateRoom >( this, GENERAL_ERROR, nullptr );

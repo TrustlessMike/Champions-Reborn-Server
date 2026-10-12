@@ -1,6 +1,8 @@
 #include "Game/ChatRoomSession.hpp"
 #include "Game/RealmUser.hpp"
 
+#include <algorithm>
+
 ChatRoomSession::ChatRoomSession()
 {
 	m_type = RoomType::Public;
@@ -15,10 +17,23 @@ ChatRoomSession::~ChatRoomSession()
 	m_name.clear();
 }
 
+// Members whose user no longer exists. They used to stay for ever: a user that had
+// entered several rooms was taken out of the last one only when it went.
+void ChatRoomSession::DropExpiredMembers()
+{
+	m_members.erase( std::remove_if( m_members.begin(), m_members.end(),
+									 []( const std::weak_ptr< RealmUser > &member )
+	{
+		return member.expired();
+	} ), m_members.end() );
+}
+
 bool ChatRoomSession::AddMember( sptr_user user )
 {
 	if( !user )
 		return false;
+
+	DropExpiredMembers();
 
 	for( const auto &member : m_members )
 	{
@@ -26,8 +41,10 @@ bool ChatRoomSession::AddMember( sptr_user user )
 			return false; // User already in the room.
 	}
 
-	m_members.push_back( user );
+	if( m_members.size() >= MAX_MEMBERS )
+		return false;
 
+	m_members.push_back( user );
 	return true;
 }
 

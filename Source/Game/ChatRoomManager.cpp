@@ -1,4 +1,6 @@
 #include "Game/ChatRoomManager.hpp"
+
+#include <algorithm>
 #include "Game/RealmUser.hpp"
 
 #include "Network/Event/NotifyRoomMessage.hpp"
@@ -169,12 +171,41 @@ void ChatRoomManager::OnDisconnectUser( sptr_user user )
 {
 	if( !user )	return;
 
-	LeaveRoom( user, user->m_publicRoomId );
-	LeaveRoom( user, user->m_privateRoomId );
+	// Every room, not only the two the user remembers: entering a second public room,
+	// or a second game's room, left it a member of the first as well.
+	for( auto it = m_chatSessionList.begin(); it != m_chatSessionList.end(); )
+	{
+		const auto &chatSession = it->second;
+
+		chatSession->RemoveMember( user );
+		chatSession->DropExpiredMembers();
+
+		if( chatSession->m_type == ChatRoomSession::RoomType::Private
+			&& chatSession->m_members.empty() && chatSession->m_moderators.empty() )
+		{
+			Log::Debug( "Private chat room [{}] deleted", chatSession->m_name );
+			it = m_chatSessionList.erase( it );
+		}
+		else
+		{
+			++it;
+		}
+	}
+
+	user->m_publicRoomId = -1;
+	user->m_privateRoomId = -1;
 }
 
 bool ChatRoomManager::CreateGameChatSession( sptr_user owner, std::wstring roomName )
 {
+	if( !owner || roomName.empty() || roomName.length() > MAX_ROOM_NAME_LENGTH )
+	{
+		Log::Error( "Chat Room without an owner or a usable name" );
+		return false;
+	}
+
+	size_t privateRooms = 0;
+
 	for( const auto &chatSession : m_chatSessionList )
 	{
 		if( chatSession.second->m_name == roomName )
@@ -182,6 +213,30 @@ bool ChatRoomManager::CreateGameChatSession( sptr_user owner, std::wstring roomN
 			Log::Error( "Chat Room name is already in use! [{}]", roomName );
 			return false;
 		}
+
+		if( chatSession.second->m_type == ChatRoomSession::RoomType::Private )
+		{
+			privateRooms++;
+		}
+	}
+
+	// A session has one game and so one game chat room. Making another leaves the one
+	// before, which goes when it is empty. (A session could make them by the thousand,
+	// and every one stayed for good.)
+	if( owner->m_privateRoomId >= 0 )
+	{
+		if( LeaveRoom( owner, owner->m_privateRoomId ) && privateRooms > 0 )
+		{
+			privateRooms--;
+		}
+
+		owner->m_privateRoomId = -1;
+	}
+
+	if( privateRooms >= MAX_PRIVATE_ROOMS )
+	{
+		Log::Error( "There are {} game chat rooms already, no more can be made", MAX_PRIVATE_ROOMS );
+		return false;
 	}
 
 	auto new_session = std::make_shared< ChatRoomSession >();
