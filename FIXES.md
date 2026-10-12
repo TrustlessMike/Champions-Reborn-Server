@@ -809,19 +809,22 @@ parameters. What follows was found by reading and then shown.
 - `tools/lobby_e2e_test.py --extended` and `tools/lobby_fix_checks.py` (both in the
   reverse-engineering repository, both unchanged): 40 of 40 and 11 of 11 against the
   fixed tree built with the address and undefined-behaviour sanitizers, which reported
-  nothing; 40 of 40 against a build with the flags of `build.sh`; 40 of 40 against a
-  build with the thread sanitizer, which reported nothing either (there are two threads,
-  section 14).
+  nothing; 16 of 16 and 40 of 40 against a build of this tree with the flags of
+  `build.sh`, made into a scratch directory; 40 of 40 against a build with the thread
+  sanitizer, which reported nothing either (there are two threads, section 14).
 - `tools/lobby_fuzz.py` (new, in this repository; Python 3, standard library only,
   127.0.0.1 only; SECURITY.md says how to run it):
   - `--mode fuzz`: against the fixed tree with the address and undefined-behaviour
-    sanitizers, set to end the process at the first report: seed 2, 2,914 sessions and
-    677,933 messages in 25 minutes (before the last changes to chat rooms, discovery
-    and 0x18), then seed 3 on the final build, 2,386 sessions and 664,076 messages in
-    20 minutes. No report, and the server answered after every session. With the
-    thread sanitizer: 156 sessions, 34,714 messages, no report. One report did come up
-    on the way and was of this work's own making: a field added to `RealmSocket` and
-    not set (section 26, last sentence).
+    sanitizers, set to end the process at the first report, four runs: seed 2, 2,914
+    sessions and 677,933 messages in 25 minutes (before the changes to chat rooms,
+    discovery and 0x18 were in); seeds 3 and 4, 2,386 and 2,254 sessions, 664,076 and
+    554,499 messages, 20 minutes each (before the limits per address were made to
+    leave private addresses alone, one line of `AcceptConnection`); and seed 7 on the
+    code as it is, 1,485 sessions and 381,786 messages in 12 minutes. 2.28 million
+    messages in all, no report, and the server answered after every session. With the
+    thread sanitizer (code as for seeds 3 and 4): 156 sessions, 34,714 messages, no
+    report. One report did come up on the way and was of this work's own making: a
+    field added to `RealmSocket` and not set (section 26, last sentence).
   - `--mode abuse`: the ten checks named above. Against the unfixed tree seven fail
     (port, save, no-login, game-data, relogin, games, rooms; chat, datagrams and
     no-reader pass: sections 9 and 14 hold). Against the fixed tree all ten pass.
@@ -973,8 +976,8 @@ Added with sections 21 to 30:
 - A lost session keeps its party, but a save for a player whose connection is lost and
   has not come back still fails, as before (section "Added with sections 16 to 18").
 - The protocol's encryption is one key that is on every disc. Passwords and session ids
-  can be read by anyone on the path, and a session taken over; nothing here can change
-  that without changing the game.
+  can be read by anyone on the path, who can then log in as that player; nothing here
+  can change that without changing the game.
 - The limits are per address. Players behind one router share them (ample for a
   household), many addresses together are not limited as a whole, and nothing is
   limited per account. Private and loopback addresses are not limited per address at

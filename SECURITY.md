@@ -71,8 +71,8 @@ Two things to check when the server is set up:
 
 - **Nothing on the wire is secret.** The "encryption" of the protocol is AES with one
   key that is on every game disc. Anyone who can see a player's traffic can read the
-  password and the session id, and can take the session over. Do not use a password here
-  that is used anywhere else.
+  password and log in as that player. Do not use a password here that is used anywhere
+  else.
 - **The people you play with.** Consoles talk to each other directly, so the players of
   a game learn each other's addresses. The game also lets every console of a party save
   every other member's character; a server that refused that would lose saves. So a
