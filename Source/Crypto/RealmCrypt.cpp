@@ -1,4 +1,5 @@
 
+#include <ctime>
 #include "Crypto/RealmCrypt.hpp"
 #include "Common/Utility.hpp"
 
