@@ -102,6 +102,7 @@ bool Config::Load( std::string filename )
 	rta_gateway_port = 40810;
 	client_timeout = 120;
 	report_public_ip_for_lan_consoles = false;
+	rta_tell_console_its_observed_address = false;
 	max_connections = 512;
 	max_connections_per_address = 16;
 	first_message_timeout = 30;
@@ -177,6 +178,10 @@ bool Config::Load( std::string filename )
 		else if( key == "report_public_ip_for_lan_consoles" )
 		{
 			report_public_ip_for_lan_consoles = ReadSwitch( value );
+		}
+		else if( key == "rta_tell_console_its_observed_address" )
+		{
+			rta_tell_console_its_observed_address = ReadSwitch( value );
 		}
 		else if( key == "max_connections" )
 		{
@@ -291,4 +296,25 @@ std::string Config::ReportedAddress( const std::string &observedIp, const std::s
 	}
 
 	return public_ip;
+}
+
+// Return to Arms keeps the address it is told here as "my own external address" and uses
+// it for one test only, while a game is being launched (0x135638 in SLUS-20973 v2.00): a
+// launch datagram whose source is that address is taken for a console behind the same
+// router, and its sender is from then on looked for at an inside address that only the
+// game's LAN start fills in. In a lobby game that address is 0.0.0.0, the sender is never
+// reached, and the launch fails. Any other source address the game simply adopts for the
+// sender - which is what repairs the entry of a player whose connection was already
+// closed when the launch tables were filled (two joiners take START up to a sixth of a
+// second apart, and the first one closes its connections at once).
+//
+// Players who share an address - two copies on one computer, two consoles behind one
+// router that loops their traffic back, every browser player behind one relay - see each
+// other's datagrams arrive from exactly the address the server observed them at. Told
+// that address, a game of three or four does not start for them. Told 0.0.0.0, the test
+// never holds, and nothing else in the game reads the value (docs/issues/three-players.md
+// in the reverse-engineering notes).
+std::string Config::OwnAddressForRta( const std::string &observedIp )
+{
+	return rta_tell_console_its_observed_address ? observedIp : std::string( "0.0.0.0" );
 }

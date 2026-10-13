@@ -2,10 +2,12 @@
 
 #include "Common/Constant.hpp"
 #include "Game/RealmUser.hpp"
+#include "configuration.hpp"
 
 NotifyClientDiscovered_RTA::NotifyClientDiscovered_RTA( sptr_user user ) : GenericMessage( 0x40 )
 {
-	this->m_clientIp = user->m_discoveryAddr;
+	// Not the address the joiner was observed at (Config::OwnAddressForRta).
+	this->m_clientIp = Config::OwnAddressForRta( user->m_discoveryAddr );
 	this->m_clientPort = user->m_discoveryPort;
 }
 

@@ -77,4 +77,12 @@ public:
 
 	// The address of a console as it should be told to the player at recipientIp.
 	static std::string ReportedAddress( const std::string &observedIp, const std::string &recipientIp );
+
+	// When set, a Return to Arms console is told the address the server observed it at
+	// as its own (0x3E, 0x40), as this server always did. Off by default: it is told
+	// 0.0.0.0, see OwnAddressForRta.
+	static inline bool rta_tell_console_its_observed_address;
+
+	// What a Return to Arms console is told as its own address in 0x3E and 0x40.
+	static std::string OwnAddressForRta( const std::string &observedIp );
 };

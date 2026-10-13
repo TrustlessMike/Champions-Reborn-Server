@@ -891,6 +891,55 @@ parameters. What follows was found by reading and then shown.
   - Not compiled on Linux, with GCC or with MSVC. No new source file; `<algorithm>`,
     `<cstddef>` and `<vector>` are the only new includes.
 
+## 32. Three or four players who share an address could not start a game (new setting, 2026-10-12)
+
+- Players who reach each other at one address - two or more copies on one computer,
+  consoles behind one router that loops their traffic back, every player of the browser
+  build behind one relay - came into one room, and at *Start Game* the launch failed for
+  one of them with the game's message that some players cannot be reached. Two players
+  were never affected. Found and proven with the game itself; the whole account is
+  `docs/issues/three-players.md` of the reverse-engineering repository.
+- The cause is in the game, and the server fed it. A console that takes the host's START
+  fills its launch tables from its live connections to the other players and then closes
+  them at once (0x324288 state 7, 0x32e198, 0x328770); the consoles read their sockets
+  every tenth frame, so of two joiners the later one finds the earlier one's connection
+  closed and stores a wrong address for it. The launch handshake repairs that from the
+  next datagram (0x135638: the sender is known by the player number in the datagram, and
+  its address and port are taken from it) - **unless the datagram's source address is the
+  address the console holds as its own**. Then the game takes the sender for a console
+  behind the same router and looks for it at an inside address that only its LAN start
+  fills in; in a lobby game that is 0.0.0.0:4000, and the sender is never reached. The
+  console's "own address" is what this server told it in 0x3E (a host) or 0x40 (a
+  joiner): the address it was observed at - which is exactly where the datagrams of
+  players who share its address come from.
+- **Fix:** a Return to Arms console is told `0.0.0.0` as its own address in 0x3E and
+  0x40; the observed port is told as before. The game reads that address for the one
+  test above and nothing else (it also copies it into the record it sends other consoles
+  about itself, from which they take no address). The test then never holds, and a
+  wrong address is always repaired from the datagram, as it is between two houses.
+  `Config::OwnAddressForRta` (Source/configuration.cpp, Include/configuration.hpp),
+  Source/Network/Event/NotifyGameDiscovered.cpp, NotifyClientDiscovered_RTA.cpp. What
+  the *other* players are told about a console (0x55, 0x57, 0x65) is unchanged.
+  Champions of Norrath consoles are told what they were told before: that game was not
+  read.
+- New setting `rta_tell_console_its_observed_address` (config.ini; 0 by default). With 1
+  the server tells the observed address again, as it did before - for comparing, or
+  should a client turn up that needs it.
+- No client has to change: every copy of the game, patched or not, in an emulator, in a
+  browser or on a console, takes the new value as it took the old one.
+- Checked with the game, on one computer, every copy at one address, against an
+  instance of its own (own database, bound to the computer's LAN address, every port the
+  usual one plus 1000); the server in `bin/` was not touched. The numbers are in
+  `docs/issues/three-players.md`, section "Tried so far".
+- `tools/lobby_e2e_test.py` of the reverse-engineering repository took the address in
+  0x3E and 0x40 for what the server had observed and compared the game list and 0x65
+  with it. It now takes the address its own datagrams leave from when it is told
+  0.0.0.0 (`observed_pair`), and passes 40 of 40 (`--extended`) against the instance
+  above; with `rta_tell_console_its_observed_address=1` nothing changes for it. Not run:
+  `lobby_fix_checks.py`, `lobby_fuzz.py`, the sanitizer build, the setting at 1.
+- Not compiled on Linux, with GCC or with MSVC. No new source file and no new include
+  outside the project's own (`configuration.hpp` in the two notification sources).
+
 ## Changes to the test client
 
 - It can be started as documented again: Python 3.13+ `argparse` imports the standard
